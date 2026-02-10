@@ -1,36 +1,5 @@
-export interface MaterialOrigin {
-  material: string;
-  origin: string;
-  verified: boolean;
-  certification?: string;
-}
-
-export interface AuditStep {
-  id: string;
-  title: string;
-  description: string;
-  status: 'verified' | 'flagged' | 'pending';
-  facility?: string;
-  energySource?: string;
-  certification?: string;
-  emissions?: string;
-}
-
-export interface ProductScan {
-  id: string;
-  name: string;
-  brand: string;
-  category: string;
-  scanDate: string;
-  score: number;
-  status: 'verified' | 'flagged' | 'pending';
-  renewablePercent: number;
-  emissions: string;
-  transportDistance: string;
-  materials: MaterialOrigin[];
-  auditSteps: AuditStep[];
-  auditProgress: number;
-}
+// AUDIT FIX: Types now imported from centralized type definitions
+import type { MaterialOrigin, AuditStep, ProductScan } from '@/types/product';
 
 export const MOCK_PRODUCTS: ProductScan[] = [
   {
@@ -56,6 +25,9 @@ export const MOCK_PRODUCTS: ProductScan[] = [
       { id: 'AS-004', title: 'Distribution & Logistics', description: 'Carbon-neutral shipping via electric fleet and rail transport.', status: 'verified', facility: 'Green Logistics Network', energySource: 'Electric Fleet', certification: 'Carbon Neutral Certified', emissions: '0.5kg CO₂' },
     ],
     auditProgress: 85,
+    confidence: 'high',
+    methodologyVersion: 'v0.1',
+    dataSource: 'mock',
   },
   {
     id: 'SCAN-2024-002',
@@ -80,6 +52,9 @@ export const MOCK_PRODUCTS: ProductScan[] = [
       { id: 'AS-008', title: 'Distribution', description: 'Ocean freight with carbon offset program.', status: 'verified', facility: 'Pacific Green Shipping', energySource: 'Diesel + Offset', certification: 'Carbon Offset Verified', emissions: '0.3kg CO₂' },
     ],
     auditProgress: 72,
+    confidence: 'high',
+    methodologyVersion: 'v0.1',
+    dataSource: 'mock',
   },
   {
     id: 'SCAN-2024-003',
@@ -104,6 +79,9 @@ export const MOCK_PRODUCTS: ProductScan[] = [
       { id: 'AS-012', title: 'Distribution', description: 'Air freight shipping with no carbon offset. Long-haul from Asia to North America.', status: 'flagged', facility: 'Standard Air Cargo', energySource: 'Jet Fuel', emissions: '2.6kg CO₂' },
     ],
     auditProgress: 45,
+    confidence: 'estimated',
+    methodologyVersion: 'v0.1',
+    dataSource: 'mock',
   },
   {
     id: 'SCAN-2024-004',
@@ -128,6 +106,9 @@ export const MOCK_PRODUCTS: ProductScan[] = [
       { id: 'AS-016', title: 'Distribution', description: 'Electric vehicle last-mile delivery. Regional distribution only.', status: 'verified', facility: 'Green Fleet Logistics', energySource: 'Electric Fleet', certification: 'Zero Emission Certified', emissions: '0.3kg CO₂' },
     ],
     auditProgress: 95,
+    confidence: 'high',
+    methodologyVersion: 'v0.1',
+    dataSource: 'mock',
   },
   {
     id: 'SCAN-2024-005',
@@ -152,6 +133,9 @@ export const MOCK_PRODUCTS: ProductScan[] = [
       { id: 'AS-020', title: 'Distribution', description: 'Intercontinental shipping via container ships. No carbon offset.', status: 'flagged', facility: 'Global Freight Corp', energySource: 'Heavy Fuel Oil', emissions: '3.3kg CO₂' },
     ],
     auditProgress: 22,
+    confidence: 'estimated',
+    methodologyVersion: 'v0.1',
+    dataSource: 'mock',
   },
   {
     id: 'SCAN-2024-006',
@@ -176,6 +160,9 @@ export const MOCK_PRODUCTS: ProductScan[] = [
       { id: 'AS-024', title: 'Distribution', description: 'Rail and electric van delivery within Europe.', status: 'verified', facility: 'EcoShip EU', energySource: 'Electric + Rail', certification: 'Carbon Low', emissions: '0.6kg CO₂' },
     ],
     auditProgress: 80,
+    confidence: 'high',
+    methodologyVersion: 'v0.1',
+    dataSource: 'mock',
   },
 ];
 

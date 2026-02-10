@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "test-tempo",
-    "slug": "test-tempo",
-    "version": "1.0.0",
+    "name": "ecotrace",
+    "slug": "ecotrace",
+    "version": "1.0.0-beta",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "myapp",
+    "scheme": "ecotrace",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
@@ -14,7 +14,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#0f172a"
       }
     },
     "web": {
@@ -25,12 +25,18 @@
     "plugins": [
       "expo-router",
       [
+        "expo-camera",
+        {
+          "cameraPermission": "ECOTRACE needs camera access to scan product barcodes."
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
+          "backgroundColor": "#0f172a"
         }
       ],
       "expo-font",
