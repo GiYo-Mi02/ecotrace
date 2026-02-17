@@ -39,6 +39,8 @@ export default function RootLayout() {
           <Stack.Screen name="parsing" options={{ animation: 'fade', gestureEnabled: false }} />
           <Stack.Screen name="impact" options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="audit" options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="productNotFound" options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="photoUpload" options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="onboarding" options={{ animation: 'fade', gestureEnabled: false }} />
           <Stack.Screen name="methodology" options={{ animation: 'slide_from_bottom' }} />
         </Stack>

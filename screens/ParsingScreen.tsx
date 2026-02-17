@@ -141,9 +141,12 @@ export default function ParsingScreen() {
       if (!mountedRef.current) return;
 
       if (!offProduct) {
-        setError(`Product not found for barcode: ${barcodeValue}`);
         progressWidth.value = withTiming(100, { duration: 300 });
         setStatusText('Product not found');
+        await delay(600);
+        if (!mountedRef.current) return;
+        // Route to ProductNotFound screen instead of dead-end error
+        router.replace(`/productNotFound?barcode=${barcodeValue}`);
         return;
       }
 
