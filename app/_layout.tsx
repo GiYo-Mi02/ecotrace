@@ -9,6 +9,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { ScanProvider } from '@/stores/ScanContext';
+import { initializeMLModel } from '@/services/mlPrediction';
 
 // Prevent splash screen from auto-hiding until fonts loaded
 SplashScreen.preventAutoHideAsync();
@@ -21,6 +22,13 @@ export default function RootLayout() {
   useEffect(() => {
     if (loaded) SplashScreen.hideAsync();
   }, [loaded]);
+
+  // Initialize TensorFlow.js ML model in background on app start
+  useEffect(() => {
+    initializeMLModel().catch((err) =>
+      console.warn('[ECOTRACE] ML init error (heuristic fallback active):', err)
+    );
+  }, []);
 
   if (!loaded) return null;
 

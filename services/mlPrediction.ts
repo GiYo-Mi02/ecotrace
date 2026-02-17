@@ -1,15 +1,19 @@
 // services/mlPrediction.ts — On-device ML prediction for unknown products
 //
-// When a barcode isn't in Open Food Facts, we can still generate an estimated
-// sustainability score using category-based heuristics and user-provided info.
+// HYBRID APPROACH:
+//   1. TensorFlow.js neural network (primary) — genuine learned predictions
+//   2. Heuristic rules engine (fallback)     — used when ML model is unavailable
 //
-// This is a pure TypeScript rules engine — no external ML packages needed.
-// It uses category averages, packaging signals, and certification keywords
-// to produce a ProductScan with confidence: 'estimated' or 'insufficient'.
+// The ML model is trained on 200+ Open Food Facts product examples and uses
+// a 12-feature neural network (353 parameters) to predict sustainability scores.
+// If the ML model hasn't been initialized yet, the system falls back to the
+// rules-based heuristic engine automatically.
 
 import type { ProductScan, ConfidenceLevel, MaterialOrigin, AuditStep } from '@/types/product';
+import { initializeModel, predictScore, getModelStatus } from '@/services/tensorflowModel';
+import { encodeProductFeatures, type ProductFeatureInput } from '@/services/featureEncoder';
 
-const METHODOLOGY_VERSION = 'v0.1-estimated';
+const METHODOLOGY_VERSION = 'v1.0-ml-hybrid';
 
 // ─── Category sustainability baselines ───────────────────────────
 // Based on aggregated Open Food Facts eco-score distributions per category.
@@ -191,7 +195,11 @@ function estimateTransport(origin?: string): { score: number; distance: string }
 }
 
 // ─── Generate audit steps for predicted product ──────────────────
-function generatePredictionAuditSteps(input: PredictionInput, dataPointCount: number): AuditStep[] {
+function generatePredictionAuditSteps(
+  input: PredictionInput,
+  dataPointCount: number,
+  method: 'ml' | 'heuristic' = 'heuristic',
+): AuditStep[] {
   const ts = Date.now();
   const steps: AuditStep[] = [];
 
@@ -209,7 +217,7 @@ function generatePredictionAuditSteps(input: PredictionInput, dataPointCount: nu
     id: `pred-audit-${ts}-2`,
     title: 'Category Classification',
     description: input.category
-      ? `Classified as: ${input.category}. Score based on category sustainability averages.`
+      ? `Classified as: ${input.category}. Score based on ${method === 'ml' ? 'TensorFlow.js neural network' : 'category sustainability averages'}.`
       : 'No category specified. Using global average baseline.',
     status: input.category ? 'verified' : 'flagged',
     dataSource: input.category ? 'User Input + Category Database' : 'Default Estimate',
@@ -245,23 +253,96 @@ function generatePredictionAuditSteps(input: PredictionInput, dataPointCount: nu
     dataSource: input.certifications && input.certifications.length > 0 ? 'User Input / OCR' : undefined,
   });
 
-  steps.push({
-    id: `pred-audit-${ts}-6`,
-    title: 'Confidence Assessment',
-    description: `${dataPointCount} of 5 data points available. ${
-      dataPointCount >= 3
-        ? 'Estimated score with moderate confidence.'
-        : 'Limited data — score is a rough estimate based on category averages.'
-    }`,
-    status: dataPointCount >= 3 ? 'verified' : 'flagged',
-    dataSource: 'ECOTRACE ML Engine',
-  });
+  // ML-specific audit step
+  if (method === 'ml') {
+    const status = getModelStatus();
+    steps.push({
+      id: `pred-audit-${ts}-6`,
+      title: 'ML Model Prediction',
+      description: `Score predicted by TensorFlow.js neural network ` +
+        `(${status.totalParameters} trained parameters, ` +
+        `architecture: ${status.architecture}). ` +
+        `Model trained on 200+ Open Food Facts product examples via gradient descent.`,
+      status: 'verified',
+      dataSource: 'TensorFlow.js Neural Network',
+    });
+  } else {
+    steps.push({
+      id: `pred-audit-${ts}-6`,
+      title: 'Confidence Assessment',
+      description: `${dataPointCount} of 5 data points available. ${
+        dataPointCount >= 3
+          ? 'Estimated score with moderate confidence (heuristic fallback).'
+          : 'Limited data — score is a rough estimate based on category averages.'
+      }`,
+      status: dataPointCount >= 3 ? 'verified' : 'flagged',
+      dataSource: 'ECOTRACE Heuristic Engine',
+    });
+  }
 
   return steps;
 }
 
 // ─── Main prediction function ────────────────────────────────────
 export function predictSustainabilityScore(input: PredictionInput): ProductScan {
+  // ── Try ML prediction first ──────────────────────────────────
+  const mlResult = tryMLPrediction(input);
+  if (mlResult !== null) {
+    return buildProductScan(input, mlResult.score, 'ml');
+  }
+
+  // ── Fallback to heuristic engine ─────────────────────────────
+  const heuristicScore = computeHeuristicScore(input);
+  return buildProductScan(input, heuristicScore.finalScore, 'heuristic', heuristicScore);
+}
+
+// ─── ML Prediction Path ─────────────────────────────────────────
+// Uses TensorFlow.js neural network for genuine learned predictions
+function tryMLPrediction(input: PredictionInput): { score: number } | null {
+  const status = getModelStatus();
+  if (!status.ready) return null;
+
+  try {
+    // Encode product features into the 12-dimensional feature vector
+    const featureInput: ProductFeatureInput = {
+      category: input.category,
+      novaGroup: undefined, // Not available from user input
+      certifications: input.certifications,
+      packagingType: input.packagingType,
+      originCountry: input.originCountry,
+      ocrText: input.ocrText,
+    };
+
+    const features = encodeProductFeatures(featureInput);
+
+    // Run forward pass through the neural network
+    const mlScore = predictScore(features);
+    if (mlScore === null) return null;
+
+    console.log(`[ML] Neural network prediction: ${mlScore}/100 for ${input.productName || input.barcode}`);
+    return { score: mlScore };
+  } catch (error) {
+    console.warn('[ML] ML prediction failed, falling back to heuristic:', error);
+    return null;
+  }
+}
+
+// ─── Heuristic scoring (fallback engine) ─────────────────────────
+interface HeuristicResult {
+  finalScore: number;
+  baseScore: number;
+  packagingModifier: number;
+  certBonus: number;
+  ocrModifier: number;
+  transport: { score: number; distance: string };
+  packagingSignals: string[];
+  matchedCerts: string[];
+  matchedCategory: string;
+  renewable: number;
+  emissions: string;
+}
+
+function computeHeuristicScore(input: PredictionInput): HeuristicResult {
   let baseScore: number;
   let renewable: number;
   let emissions: string;
@@ -330,7 +411,7 @@ export function predictSustainabilityScore(input: PredictionInput): ProductScan 
 
     for (const sig of ocrSignals.certSignals) {
       if (!matchedCerts.includes(sig)) {
-        ocrModifier += (CERT_BONUSES[sig] || 0) * 0.7; // Lower weight from OCR (less reliable)
+        ocrModifier += (CERT_BONUSES[sig] || 0) * 0.7;
         matchedCerts.push(sig);
       }
     }
@@ -343,11 +424,51 @@ export function predictSustainabilityScore(input: PredictionInput): ProductScan 
   // Step 5: Transport estimate
   const transport = estimateTransport(input.originCountry);
 
-  // Step 6: Compute final score with all modifiers
+  // Step 6: Compute final score
   const rawScore = baseScore + packagingModifier + certBonus + ocrModifier + (transport.score - 7);
   const finalScore = Math.max(0, Math.min(100, Math.round(rawScore)));
 
-  // Step 7: Determine confidence
+  return {
+    finalScore, baseScore, packagingModifier, certBonus, ocrModifier,
+    transport, packagingSignals, matchedCerts, matchedCategory, renewable, emissions,
+  };
+}
+
+// ─── Build the ProductScan result ────────────────────────────────
+function buildProductScan(
+  input: PredictionInput,
+  score: number,
+  method: 'ml' | 'heuristic',
+  heuristic?: HeuristicResult,
+): ProductScan {
+  const finalScore = Math.max(0, Math.min(100, Math.round(score)));
+
+  // Determine category label
+  let matchedCategory = 'Unknown';
+  if (heuristic) {
+    matchedCategory = heuristic.matchedCategory;
+  } else if (input.category) {
+    const catMatch = matchCategory(input.category);
+    matchedCategory = catMatch
+      ? catMatch.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+      : input.category;
+  }
+
+  // Renewable + emissions (from heuristic data or category baseline)
+  let renewable = DEFAULT_BASELINE.renewable;
+  let emissions = DEFAULT_BASELINE.emissions;
+  if (heuristic) {
+    renewable = heuristic.renewable;
+    emissions = heuristic.emissions;
+  } else if (input.category) {
+    const catMatch = matchCategory(input.category);
+    if (catMatch) {
+      renewable = CATEGORY_BASELINES[catMatch].renewable;
+      emissions = CATEGORY_BASELINES[catMatch].emissions;
+    }
+  }
+
+  // Data points for confidence
   let dataPoints = 0;
   if (input.category) dataPoints++;
   if (input.packagingType) dataPoints++;
@@ -357,7 +478,10 @@ export function predictSustainabilityScore(input: PredictionInput): ProductScan 
 
   const confidence: ConfidenceLevel = dataPoints >= 3 ? 'estimated' : 'insufficient';
 
-  // Step 8: Build materials list
+  // Transport
+  const transport = heuristic?.transport || estimateTransport(input.originCountry);
+
+  // Materials list
   const materials: MaterialOrigin[] = [];
   if (input.packagingType) {
     materials.push({
@@ -367,15 +491,14 @@ export function predictSustainabilityScore(input: PredictionInput): ProductScan 
       source: 'User Input (estimated)',
     });
   }
-  if (packagingSignals.length > 0) {
-    for (const sig of packagingSignals.slice(0, 3)) {
-      materials.push({
-        material: sig.charAt(0).toUpperCase() + sig.slice(1),
-        origin: input.originCountry || 'Not disclosed',
-        verified: false,
-        source: 'ML Prediction',
-      });
-    }
+  const packagingSignals = heuristic?.packagingSignals || [];
+  for (const sig of packagingSignals.slice(0, 3)) {
+    materials.push({
+      material: sig.charAt(0).toUpperCase() + sig.slice(1),
+      origin: input.originCountry || 'Not disclosed',
+      verified: false,
+      source: method === 'ml' ? 'TensorFlow.js Neural Network' : 'Heuristic Engine',
+    });
   }
   if (materials.length === 0) {
     materials.push({
@@ -386,21 +509,27 @@ export function predictSustainabilityScore(input: PredictionInput): ProductScan 
     });
   }
 
-  // Step 9: Audit trail
-  const auditSteps = generatePredictionAuditSteps(input, dataPoints);
+  // Audit trail
+  const auditSteps = generatePredictionAuditSteps(input, dataPoints, method);
   const verifiedSteps = auditSteps.filter(s => s.status === 'verified').length;
 
-  // Step 10: Scoring breakdown
-  const breakdown: Record<string, number> = {
-    category_baseline: Math.min(40, Math.round(baseScore * 0.4)),
-    packaging_assessment: Math.max(0, Math.min(20, 10 + packagingModifier)),
-    transport_estimate: Math.max(0, Math.min(15, transport.score)),
-    certifications: Math.min(10, certBonus),
-    ocr_signals: Math.round(Math.abs(ocrModifier)),
-  };
+  // Scoring breakdown
+  const breakdown: Record<string, number> = method === 'ml'
+    ? {
+        ml_neural_network: finalScore,
+        model_architecture: 0, // metadata: Dense(12→16→8→1)
+        training_examples: 0,  // metadata: 200+ augmented
+      }
+    : {
+        category_baseline: Math.min(40, Math.round((heuristic?.baseScore || 45) * 0.4)),
+        packaging_assessment: Math.max(0, Math.min(20, 10 + (heuristic?.packagingModifier || 0))),
+        transport_estimate: Math.max(0, Math.min(15, transport.score)),
+        certifications: Math.min(10, heuristic?.certBonus || 0),
+        ocr_signals: Math.round(Math.abs(heuristic?.ocrModifier || 0)),
+      };
 
   return {
-    id: `PRED-${Date.now()}`,
+    id: `${method === 'ml' ? 'ML' : 'HEUR'}-${Date.now()}`,
     barcode: input.barcode,
     name: input.productName || 'Unknown Product',
     brand: input.brand || 'Unknown Brand',
@@ -409,7 +538,7 @@ export function predictSustainabilityScore(input: PredictionInput): ProductScan 
     score: finalScore,
     confidence,
     status: finalScore >= 60 ? 'verified' : finalScore >= 30 ? 'pending' : 'flagged',
-    renewablePercent: Math.max(5, Math.min(95, renewable + Math.round(packagingModifier * 1.5))),
+    renewablePercent: Math.max(5, Math.min(95, renewable + Math.round((heuristic?.packagingModifier || 0) * 1.5))),
     emissions,
     transportDistance: transport.distance,
     materials,
@@ -424,6 +553,40 @@ export function predictSustainabilityScore(input: PredictionInput): ProductScan 
 // ─── Quick predict (minimal input — just category) ───────────────
 export function quickPredict(barcode: string, category: string): ProductScan {
   return predictSustainabilityScore({ barcode, category });
+}
+
+// ─── Initialize the ML model (call on app startup) ──────────────
+export async function initializeMLModel(): Promise<boolean> {
+  try {
+    console.log('[ECOTRACE] Initializing ML model...');
+    const success = await initializeModel();
+    if (success) {
+      const status = getModelStatus();
+      console.log(`[ECOTRACE] ML model ready — ${status.totalParameters} parameters trained`);
+    } else {
+      console.log('[ECOTRACE] ML model not available, using heuristic fallback');
+    }
+    return success;
+  } catch (error) {
+    console.warn('[ECOTRACE] ML initialization failed, heuristic fallback active:', error);
+    return false;
+  }
+}
+
+// ─── Get prediction engine status ────────────────────────────────
+export function getPredictionEngineStatus(): {
+  mlReady: boolean;
+  mlTraining: boolean;
+  totalParameters: number;
+  engine: 'tensorflow' | 'heuristic';
+} {
+  const status = getModelStatus();
+  return {
+    mlReady: status.ready,
+    mlTraining: status.training,
+    totalParameters: status.totalParameters,
+    engine: status.ready ? 'tensorflow' : 'heuristic',
+  };
 }
 
 // ─── Get available categories for UI picker ──────────────────────
