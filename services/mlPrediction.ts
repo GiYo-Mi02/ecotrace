@@ -1,13 +1,13 @@
-// services/mlPrediction.ts — ECOTRACE ML Prediction Service v2.0
+// services/mlPrediction.ts — ECOTRACE ML Prediction Service v4.0
 //
 // Prediction pipeline with a 3-tier fallback chain:
-//   1. Neural Network (pure-TS, on-device) — best quality
+//   1. Neural Network (pure-TS, on-device, 40→256→128→64→1) — best quality
 //   2. Rule-Based heuristic — when NN is untrained or features are sparse
 //   3. Category Average — last resort fallback
 //
 // Exports initializeMLModel() for app startup and predictEcoScore() for scoring.
 
-import { initModel, predict, getModelStatus, loadWeightsFromJSON, train } from './tensorflowModel';
+import { initModel, predict, getModelStatus, loadWeightsFromJSON } from './tensorflowModel';
 import { encodeFromOFFProduct, encodeLocalProduct, NUM_FEATURES } from './featureEncoder';
 import type { OFFRawProduct, LocalProduct } from './featureEncoder';
 
@@ -70,42 +70,56 @@ function getCategoryAverage(categoryTags?: string[]): number {
 // ─── Rule-Based Scoring (fallback tier 2) ────────────────────────
 
 function ruleBasedScore(features: number[]): number {
-  // Weighted sum of 28 encoded features
+  // Weighted sum of 40 encoded features (MUST match featureEncoder.ts order)
   const weights = [
-    // Category Analysis (3)
-    0.12,  // categoryEnvironmentScore
-    0.05,  // categoryProcessingLevel
-    0.05,  // categoryHealthScore
+    // Category Analysis (1)
+    0.15,  // [0]  categoryEnvScore_dataDriven
     // Processing Level (3)
-    0.08,  // novaGroupNormalized
-    -0.03, // isUltraProcessed (negative = penalty)
-    0.04,  // ingredientComplexity
+    0.08,  // [1]  novaGroupNormalized
+    -0.03, // [2]  isUltraProcessed (negative = penalty)
+    0.04,  // [3]  ingredientComplexity
     // Packaging Features (6)
-    -0.04, // hasPlasticPackaging (negative = penalty)
-    0.03,  // hasGlassPackaging
-    0.03,  // hasCardboardPackaging
-    0.02,  // hasMetalPackaging
-    0.03,  // hasCompostablePackaging
-    0.02,  // packagingMaterialCount
+    -0.04, // [4]  hasPlasticPackaging (negative = penalty)
+    0.03,  // [5]  hasGlassPackaging
+    0.03,  // [6]  hasCardboardPackaging
+    0.02,  // [7]  hasMetalPackaging
+    0.03,  // [8]  hasCompostablePackaging
+    0.02,  // [9]  packagingMaterialCount
     // Certifications (6)
-    0.08,  // hasOrganicCert
-    0.05,  // hasFairTradeCert
-    0.04,  // hasRainforestAllianceCert
-    0.03,  // hasEUEcolabel
-    0.03,  // hasMSCCert
-    0.05,  // certificationTotalScore
+    0.08,  // [10] hasOrganicCert
+    0.05,  // [11] hasFairTradeCert
+    0.04,  // [12] hasRainforestAllianceCert
+    0.03,  // [13] hasEUEcolabel
+    0.03,  // [14] hasMSCCert
+    0.05,  // [15] certificationTotalScore
     // Origin & Sustainability (4)
-    0.06,  // originSustainabilityScore
-    0.03,  // hasLocalOrigin
-    0.04,  // transportEstimateScore
-    0.03,  // manufacturingSustainability
-    // Ingredient Analysis (6)
-    0.04,  // isVegan
-    0.03,  // isVegetarian
-    -0.03, // hasPalmOil (negative = penalty)
-    -0.02, // hasHighSugar
-    -0.02, // hasHighSaturatedFat
-    -0.02, // hasHighSodium
+    0.06,  // [16] originSustainabilityScore
+    0.03,  // [17] hasLocalOrigin
+    0.04,  // [18] transportEstimateScore
+    0.03,  // [19] manufacturingSustainability
+    // Ingredient Analysis (3)
+    0.04,  // [20] isVegan
+    0.03,  // [21] isVegetarian
+    -0.03, // [22] hasPalmOil (negative = penalty)
+    // Nutrient Levels (5)
+    -0.02, // [23] hasHighSugar
+    -0.02, // [24] hasHighSaturatedFat
+    -0.02, // [25] hasHighSodium
+    -0.02, // [26] hasHighFat
+    0.02,  // [27] hasLowFat
+    // Food Group Binaries (12)
+    -0.06, // [28] isMeatProduct
+    -0.03, // [29] isFishSeafood
+    -0.02, // [30] isDairyProduct
+    0.05,  // [31] isPlantBased
+    0.05,  // [32] isFruitVegetable
+    0.02,  // [33] isCereal
+    0.00,  // [34] isBeverage
+    -0.01, // [35] isFatOil
+    -0.02, // [36] isSweetSnack
+    -0.01, // [37] isCanned
+    -0.01, // [38] isFrozen
+    -0.02, // [39] isReadyMeal
   ];
 
   let score = 0;
@@ -224,7 +238,7 @@ export async function initializeMLModel(): Promise<void> {
   if (_initPromise) return _initPromise;
 
   _initPromise = (async () => {
-    console.log('[ML] Initializing ECOTRACE ML prediction service v2.0...');
+    console.log('[ML] Initializing ECOTRACE ML prediction service v4.0...');
 
     const hadCachedWeights = await initModel();
 
@@ -251,46 +265,9 @@ export async function initializeMLModel(): Promise<void> {
   return _initPromise;
 }
 
-/**
- * Train the on-device model with the embedded training dataset.
- */
-export async function trainOnEmbeddedData(): Promise<void> {
-  try {
-    const { getTrainingExamples } = require('../data/trainingDataset');
-    const examples = getTrainingExamples();
-
-    if (!examples || examples.length === 0) {
-      console.log('[ML] No embedded training data available');
-      return;
-    }
-
-    const features: number[][] = [];
-    const labels: number[] = [];
-
-    for (const ex of examples) {
-      if (ex.features && ex.label !== undefined) {
-        features.push(ex.features);
-        labels.push(ex.label);
-      }
-    }
-
-    if (features.length < 10) {
-      console.log(`[ML] Insufficient embedded training data (${features.length} examples)`);
-      return;
-    }
-
-    console.log(`[ML] Training on ${features.length} embedded examples...`);
-    const result = await train(features, labels, {
-      epochs: 30,
-      learningRate: 0.001,
-      batchSize: 16,
-    });
-
-    console.log(`[ML] On-device training complete. Final loss: ${result.finalLoss.toFixed(6)}`);
-  } catch (e) {
-    console.warn('[ML] On-device training failed:', e);
-  }
-}
+// On-device training removed — training is done offline via
+// `node scripts/trainModel.js` and weights are bundled as JSON.
+// The mobile app is inference-only.
 
 // ─── Quick Prediction for ProductNotFoundScreen ──────────────────
 

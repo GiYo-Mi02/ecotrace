@@ -46,3 +46,29 @@ export interface ProductScan {
   methodologyVersion: string;
   dataSource: 'openfoodfacts' | 'mock' | 'user_submitted';
 }
+
+// ─── ML Model Types ──────────────────────────────────────────────
+
+/** Result of validating training-serving feature consistency */
+export interface FeatureValidation {
+  isValid: boolean;
+  featureCount: number;
+  expectedCount: number;
+  mismatches: string[];
+  timestamp: string;
+}
+
+/** Metadata about the trained model, saved alongside weights */
+export interface ModelMetadata {
+  trainedAt: string;
+  architecture: string;
+  numFeatures: number;
+  totalParameters: number;
+  trainingSamples: number;
+  rSquared: number;
+  mae: number;
+  accuracyAt10: number;
+  hasNormalization: boolean;
+  hasBatchNorm: boolean;
+  weightsVersion: string;
+}

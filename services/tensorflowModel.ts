@@ -1,54 +1,64 @@
-// services/tensorflowModel.ts — Pure TypeScript Neural Network v2.0 (NO native deps)
+// services/tensorflowModel.ts — Pure TypeScript Neural Network v4.0 (NO native deps)
 //
-// Architecture: 28 → 64 (ReLU) → 32 (ReLU) → 16 (ReLU) → 1 (Sigmoid)
-// Total parameters: 28×64+64 + 64×32+32 + 32×16+16 + 16×1+1 = 2,897
+// Architecture: 40 → 256 (BN+ReLU) → 128 (BN+ReLU) → 64 (BN+ReLU) → 1 (Sigmoid)
 //
-// This module implements forward propagation, backpropagation, and Adam
-// optimizer entirely in TypeScript — no @tensorflow/tfjs import — so it
-// works inside React Native's Hermes engine without crashing.
+// This module implements INFERENCE-ONLY forward propagation entirely in
+// TypeScript — no @tensorflow/tfjs import — so it runs inside React
+// Native's Hermes engine without crashing.
+//
+// CRITICAL: This file MUST stay in sync with scripts/trainModel.js.
+//   - INPUT_DIM must match NUM_FEATURES in trainModel.js
+//   - Architecture constants must match buildModel() in trainModel.js
+//   - Z-score normalization MUST be applied using featureMeans/featureStds
+//     saved by trainModel.js in weights.json
+//
+// Run `node scripts/validateSync.js` to verify sync before deployment.
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// ─── Configuration ───────────────────────────────────────────────
+// ─── Architecture Constants (MUST match trainModel.js) ───────────
 
-const INPUT_DIM = 28;
-const HIDDEN1_DIM = 64;
-const HIDDEN2_DIM = 32;
-const HIDDEN3_DIM = 16;
+const INPUT_DIM = 40;
+const HIDDEN1_DIM = 256;
+const HIDDEN2_DIM = 128;
+const HIDDEN3_DIM = 64;
 const OUTPUT_DIM = 1;
-const TOTAL_PARAMS =
-  (INPUT_DIM * HIDDEN1_DIM + HIDDEN1_DIM) +     // 28×64 + 64 = 1856
-  (HIDDEN1_DIM * HIDDEN2_DIM + HIDDEN2_DIM) +   // 64×32 + 32 = 2080
-  (HIDDEN2_DIM * HIDDEN3_DIM + HIDDEN3_DIM) +   // 32×16 + 16 = 528
-  (HIDDEN3_DIM * OUTPUT_DIM + OUTPUT_DIM);       // 16×1 + 1   = 17
-  // Total: 4481
 
-const STORAGE_KEY = '@ecotrace_nn_weights_v3';
-const METADATA_KEY = '@ecotrace_nn_metadata_v3';
+const STORAGE_KEY = '@ecotrace_nn_weights_v4';
 
 // ─── Types ───────────────────────────────────────────────────────
 
-interface NNWeights {
-  W1: number[][];  // 28 × 64
-  b1: number[];    // 64
-  W2: number[][];  // 64 × 32
-  b2: number[];    // 32
-  W3: number[][];  // 32 × 16
-  b3: number[];    // 16
-  W4: number[][];  // 16 × 1
-  b4: number[];    // 1
+/** BatchNorm parameters for a single layer */
+interface BatchNormParams {
+  gamma: number[];
+  beta: number[];
+  movingMean: number[];
+  movingVariance: number[];
 }
 
-interface AdamState {
-  mW1: number[][]; vW1: number[][];
-  mb1: number[];   vb1: number[];
-  mW2: number[][]; vW2: number[][];
-  mb2: number[];   vb2: number[];
-  mW3: number[][]; vW3: number[][];
-  mb3: number[];   vb3: number[];
-  mW4: number[][]; vW4: number[][];
-  mb4: number[];   vb4: number[];
-  t: number;
+/**
+ * Weight structure output by trainModel.js extractWeightsForPureTS().
+ * Includes dense weights, batch norm params, and z-score normalization stats.
+ */
+interface NNWeights {
+  // Dense layer weights
+  W1: number[][];  // [40][256]
+  b1: number[];    // [256]
+  W2: number[][];  // [256][128]
+  b2: number[];    // [128]
+  W3: number[][];  // [128][64]
+  b3: number[];    // [64]
+  W4: number[][];  // [64][1]
+  b4: number[];    // [1]
+
+  // BatchNorm parameters (from trainModel.js BN layers)
+  bn1?: BatchNormParams;  // [256]
+  bn2?: BatchNormParams;  // [128]
+  bn3?: BatchNormParams;  // [64]
+
+  // Z-score normalization stats (computed from training set)
+  featureMeans: number[];  // [40]
+  featureStds: number[];   // [40]
 }
 
 export interface ModelAccuracyMetrics {
@@ -63,44 +73,10 @@ export interface ModelAccuracyMetrics {
   sampleCount: number;
 }
 
-interface TrainingMetadata {
-  trainedAt: string;
-  epochs: number;
-  finalLoss: number;
-  sampleCount: number;
-  architecture: string;
-  accuracy?: ModelAccuracyMetrics;
-}
-
 // ─── Math Utilities ──────────────────────────────────────────────
-
-function glorotInit(fanIn: number, fanOut: number): number[][] {
-  const limit = Math.sqrt(6.0 / (fanIn + fanOut));
-  const matrix: number[][] = [];
-  for (let i = 0; i < fanIn; i++) {
-    const row: number[] = [];
-    for (let j = 0; j < fanOut; j++) {
-      row.push((Math.random() * 2 - 1) * limit);
-    }
-    matrix.push(row);
-  }
-  return matrix;
-}
-
-function zerosVector(n: number): number[] {
-  return new Array(n).fill(0);
-}
-
-function zerosMatrix(rows: number, cols: number): number[][] {
-  return Array.from({ length: rows }, () => new Array(cols).fill(0));
-}
 
 function relu(x: number): number {
   return x > 0 ? x : 0;
-}
-
-function reluDeriv(x: number): number {
-  return x > 0 ? 1 : 0;
 }
 
 function sigmoid(x: number): number {
@@ -109,6 +85,10 @@ function sigmoid(x: number): number {
   return 1 / (1 + Math.exp(-x));
 }
 
+/**
+ * Matrix-vector multiplication: W[rows][cols] × x[rows] → out[cols]
+ * W is [inputDim][outputDim], x is [inputDim], output is [outputDim]
+ */
 function matMulVec(W: number[][], x: number[]): number[] {
   const out: number[] = new Array(W[0].length).fill(0);
   for (let j = 0; j < W[0].length; j++) {
@@ -125,492 +105,189 @@ function addVec(a: number[], b: number[]): number[] {
   return a.map((v, i) => v + b[i]);
 }
 
-// ─── Neural Network Model ────────────────────────────────────────
+/**
+ * Apply batch normalization (inference mode):
+ *   y = gamma * (x - movingMean) / sqrt(movingVariance + epsilon) + beta
+ */
+function batchNormInference(
+  x: number[],
+  bn: BatchNormParams,
+  epsilon: number = 1e-3,
+): number[] {
+  return x.map((val, i) => {
+    const normalized = (val - bn.movingMean[i]) / Math.sqrt(bn.movingVariance[i] + epsilon);
+    return bn.gamma[i] * normalized + bn.beta[i];
+  });
+}
+
+// ─── Model State ─────────────────────────────────────────────────
 
 let weights: NNWeights | null = null;
-let adamState: AdamState | null = null;
-let metadata: TrainingMetadata | null = null;
 let isInitialized = false;
 
-/** Initialize model — tries loading cached weights, else random init */
+// ─── Initialization ──────────────────────────────────────────────
+
+/** Initialize model — tries loading cached weights first */
 export async function initModel(): Promise<boolean> {
   try {
     const stored = await AsyncStorage.getItem(STORAGE_KEY);
-    const storedMeta = await AsyncStorage.getItem(METADATA_KEY);
-
     if (stored) {
-      weights = JSON.parse(stored);
-      metadata = storedMeta ? JSON.parse(storedMeta) : null;
-      isInitialized = true;
-      console.log(`[NN] Loaded cached weights. Architecture: ${INPUT_DIM}→${HIDDEN1_DIM}→${HIDDEN2_DIM}→${HIDDEN3_DIM}→${OUTPUT_DIM}`);
-      if (metadata) {
-        console.log(`[NN] Trained: ${metadata.trainedAt}, Loss: ${metadata.finalLoss.toFixed(6)}, Samples: ${metadata.sampleCount}`);
+      const parsed = JSON.parse(stored);
+      if (validateWeights(parsed)) {
+        weights = parsed;
+        isInitialized = true;
+        console.log(`[NN] Loaded cached weights. Architecture: ${INPUT_DIM}→${HIDDEN1_DIM}→${HIDDEN2_DIM}→${HIDDEN3_DIM}→${OUTPUT_DIM}`);
+        return true;
       }
-      return true;
+      console.warn('[NN] Cached weights failed validation, ignoring');
     }
   } catch (e) {
-    console.warn('[NN] Cache load failed, initializing fresh weights');
+    console.warn('[NN] Cache load failed');
   }
 
-  initRandomWeights();
-  isInitialized = true;
-  console.log(`[NN] Initialized fresh weights (untrained). Architecture: ${INPUT_DIM}→${HIDDEN1_DIM}→${HIDDEN2_DIM}→${HIDDEN3_DIM}→${OUTPUT_DIM}`);
+  isInitialized = false;
+  weights = null;
   return false;
 }
 
-function initRandomWeights() {
-  weights = {
-    W1: glorotInit(INPUT_DIM, HIDDEN1_DIM),
-    b1: zerosVector(HIDDEN1_DIM),
-    W2: glorotInit(HIDDEN1_DIM, HIDDEN2_DIM),
-    b2: zerosVector(HIDDEN2_DIM),
-    W3: glorotInit(HIDDEN2_DIM, HIDDEN3_DIM),
-    b3: zerosVector(HIDDEN3_DIM),
-    W4: glorotInit(HIDDEN3_DIM, OUTPUT_DIM),
-    b4: zerosVector(OUTPUT_DIM),
-  };
+/** Load pre-trained weights from a JSON object (e.g., bundled asset) */
+export function loadWeightsFromJSON(weightsJSON: any): void {
+  if (!validateWeights(weightsJSON)) {
+    console.error('[NN] Weight validation failed — dimensions do not match architecture');
+    return;
+  }
+  weights = weightsJSON as NNWeights;
+  isInitialized = true;
+
+  // Cache for next launch
+  AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(weights)).catch(() => {});
+
+  console.log(`[NN] Loaded pre-trained weights. Architecture: ${INPUT_DIM}→${HIDDEN1_DIM}→${HIDDEN2_DIM}→${HIDDEN3_DIM}→${OUTPUT_DIM}`);
+  console.log(`[NN] Z-score normalization: ${weights.featureMeans ? 'enabled' : 'MISSING (will produce garbage!)'}`);
 }
 
-function initAdamState() {
-  adamState = {
-    mW1: zerosMatrix(INPUT_DIM, HIDDEN1_DIM),
-    vW1: zerosMatrix(INPUT_DIM, HIDDEN1_DIM),
-    mb1: zerosVector(HIDDEN1_DIM),
-    vb1: zerosVector(HIDDEN1_DIM),
-    mW2: zerosMatrix(HIDDEN1_DIM, HIDDEN2_DIM),
-    vW2: zerosMatrix(HIDDEN1_DIM, HIDDEN2_DIM),
-    mb2: zerosVector(HIDDEN2_DIM),
-    vb2: zerosVector(HIDDEN2_DIM),
-    mW3: zerosMatrix(HIDDEN2_DIM, HIDDEN3_DIM),
-    vW3: zerosMatrix(HIDDEN2_DIM, HIDDEN3_DIM),
-    mb3: zerosVector(HIDDEN3_DIM),
-    vb3: zerosVector(HIDDEN3_DIM),
-    mW4: zerosMatrix(HIDDEN3_DIM, OUTPUT_DIM),
-    vW4: zerosMatrix(HIDDEN3_DIM, OUTPUT_DIM),
-    mb4: zerosVector(OUTPUT_DIM),
-    vb4: zerosVector(OUTPUT_DIM),
-    t: 0,
-  };
+/** Validate that weights match expected architecture */
+function validateWeights(w: any): boolean {
+  if (!w || !w.W1 || !w.b1 || !w.W2 || !w.b2 || !w.W3 || !w.b3 || !w.W4 || !w.b4) return false;
+
+  // Check dense layer dimensions
+  if (w.W1.length !== INPUT_DIM || w.W1[0]?.length !== HIDDEN1_DIM) return false;
+  if (w.b1.length !== HIDDEN1_DIM) return false;
+  if (w.W2.length !== HIDDEN1_DIM || w.W2[0]?.length !== HIDDEN2_DIM) return false;
+  if (w.b2.length !== HIDDEN2_DIM) return false;
+  if (w.W3.length !== HIDDEN2_DIM || w.W3[0]?.length !== HIDDEN3_DIM) return false;
+  if (w.b3.length !== HIDDEN3_DIM) return false;
+  if (w.W4.length !== HIDDEN3_DIM || w.W4[0]?.length !== OUTPUT_DIM) return false;
+  if (w.b4.length !== OUTPUT_DIM) return false;
+
+  // Check normalization stats
+  if (!w.featureMeans || !w.featureStds) {
+    console.warn('[NN] Weights missing featureMeans/featureStds — z-score normalization disabled');
+  }
+
+  return true;
 }
 
-// ─── Forward Pass ────────────────────────────────────────────────
+// ─── Forward Pass (Inference Only) ───────────────────────────────
 
-interface ForwardResult {
-  z1: number[]; a1: number[];
-  z2: number[]; a2: number[];
-  z3: number[]; a3: number[];
-  z4: number[];
-  output: number;
-}
-
-function forward(input: number[]): ForwardResult {
-  if (!weights) throw new Error('Model not initialized');
-  if (input.length !== INPUT_DIM) throw new Error(`Expected ${INPUT_DIM} features, got ${input.length}`);
-
-  // Layer 1: input (28) → hidden1 (64), ReLU
-  const z1 = addVec(matMulVec(weights.W1, input), weights.b1);
-  const a1 = z1.map(relu);
-
-  // Layer 2: hidden1 (64) → hidden2 (32), ReLU
-  const z2 = addVec(matMulVec(weights.W2, a1), weights.b2);
-  const a2 = z2.map(relu);
-
-  // Layer 3: hidden2 (32) → hidden3 (16), ReLU
-  const z3 = addVec(matMulVec(weights.W3, a2), weights.b3);
-  const a3 = z3.map(relu);
-
-  // Layer 4: hidden3 (16) → output (1), Sigmoid
-  const z4 = addVec(matMulVec(weights.W4, a3), weights.b4);
-  const output = sigmoid(z4[0]);
-
-  return { z1, a1, z2, a2, z3, a3, z4, output };
-}
-
-/** Public prediction function — returns score in [0, 1] */
+/**
+ * Run forward pass through the neural network.
+ *
+ * CRITICAL: Input features are in [0,1] range from featureEncoder.ts.
+ * Z-score normalization is applied here using featureMeans/featureStds
+ * saved during training. This MUST happen or predictions will be garbage.
+ *
+ * @param features Raw feature vector from featureEncoder.ts (40 features, [0,1] range)
+ * @returns Score in [0,1] range (multiply by 100 for eco-score)
+ */
 export function predict(features: number[]): number {
   if (!isInitialized || !weights) {
     console.warn('[NN] Model not initialized, returning 0.5');
     return 0.5;
   }
-  const result = forward(features);
-  return result.output;
-}
 
-// ─── Backpropagation ─────────────────────────────────────────────
-
-interface Gradients {
-  dW1: number[][]; db1: number[];
-  dW2: number[][]; db2: number[];
-  dW3: number[][]; db3: number[];
-  dW4: number[][]; db4: number[];
-}
-
-function backward(input: number[], target: number, fwd: ForwardResult): Gradients {
-  if (!weights) throw new Error('Model not initialized');
-
-  // Output layer gradient (MSE + sigmoid derivative)
-  const dOutput = 2 * (fwd.output - target);
-  const dsigmoid = fwd.output * (1 - fwd.output);
-
-  // Layer 4 gradients
-  const dz4 = [dOutput * dsigmoid];
-  const dW4: number[][] = zerosMatrix(HIDDEN3_DIM, OUTPUT_DIM);
-  for (let i = 0; i < HIDDEN3_DIM; i++) {
-    dW4[i][0] = fwd.a3[i] * dz4[0];
-  }
-  const db4 = [...dz4];
-
-  // Layer 3 gradients
-  const da3: number[] = zerosVector(HIDDEN3_DIM);
-  for (let i = 0; i < HIDDEN3_DIM; i++) {
-    da3[i] = weights.W4[i][0] * dz4[0];
-  }
-  const dz3 = da3.map((v, i) => v * reluDeriv(fwd.z3[i]));
-
-  const dW3: number[][] = zerosMatrix(HIDDEN2_DIM, HIDDEN3_DIM);
-  for (let i = 0; i < HIDDEN2_DIM; i++) {
-    for (let j = 0; j < HIDDEN3_DIM; j++) {
-      dW3[i][j] = fwd.a2[i] * dz3[j];
-    }
-  }
-  const db3 = [...dz3];
-
-  // Layer 2 gradients
-  const da2: number[] = zerosVector(HIDDEN2_DIM);
-  for (let i = 0; i < HIDDEN2_DIM; i++) {
-    for (let j = 0; j < HIDDEN3_DIM; j++) {
-      da2[i] += weights.W3[i][j] * dz3[j];
-    }
-  }
-  const dz2 = da2.map((v, i) => v * reluDeriv(fwd.z2[i]));
-
-  const dW2: number[][] = zerosMatrix(HIDDEN1_DIM, HIDDEN2_DIM);
-  for (let i = 0; i < HIDDEN1_DIM; i++) {
-    for (let j = 0; j < HIDDEN2_DIM; j++) {
-      dW2[i][j] = fwd.a1[i] * dz2[j];
-    }
-  }
-  const db2 = [...dz2];
-
-  // Layer 1 gradients
-  const da1: number[] = zerosVector(HIDDEN1_DIM);
-  for (let i = 0; i < HIDDEN1_DIM; i++) {
-    for (let j = 0; j < HIDDEN2_DIM; j++) {
-      da1[i] += weights.W2[i][j] * dz2[j];
-    }
-  }
-  const dz1 = da1.map((v, i) => v * reluDeriv(fwd.z1[i]));
-
-  const dW1: number[][] = zerosMatrix(INPUT_DIM, HIDDEN1_DIM);
-  for (let i = 0; i < INPUT_DIM; i++) {
-    for (let j = 0; j < HIDDEN1_DIM; j++) {
-      dW1[i][j] = input[i] * dz1[j];
-    }
-  }
-  const db1 = [...dz1];
-
-  return { dW1, db1, dW2, db2, dW3, db3, dW4, db4 };
-}
-
-// ─── Adam Optimizer ──────────────────────────────────────────────
-
-function adamUpdate(
-  lr: number = 0.001,
-  beta1: number = 0.9,
-  beta2: number = 0.999,
-  epsilon: number = 1e-8,
-  grads: Gradients,
-): void {
-  if (!weights || !adamState) return;
-
-  adamState.t++;
-  const t = adamState.t;
-
-  function updateMatrix(W: number[][], dW: number[][], mW: number[][], vW: number[][]) {
-    for (let i = 0; i < W.length; i++) {
-      for (let j = 0; j < W[0].length; j++) {
-        mW[i][j] = beta1 * mW[i][j] + (1 - beta1) * dW[i][j];
-        vW[i][j] = beta2 * vW[i][j] + (1 - beta2) * dW[i][j] * dW[i][j];
-        const mHat = mW[i][j] / (1 - Math.pow(beta1, t));
-        const vHat = vW[i][j] / (1 - Math.pow(beta2, t));
-        W[i][j] -= lr * mHat / (Math.sqrt(vHat) + epsilon);
-      }
-    }
+  if (features.length !== INPUT_DIM) {
+    console.error(`[NN] Input dimension mismatch: expected ${INPUT_DIM}, got ${features.length}`);
+    return 0.5;
   }
 
-  function updateVector(b: number[], db: number[], mb: number[], vb: number[]) {
-    for (let i = 0; i < b.length; i++) {
-      mb[i] = beta1 * mb[i] + (1 - beta1) * db[i];
-      vb[i] = beta2 * vb[i] + (1 - beta2) * db[i] * db[i];
-      const mHat = mb[i] / (1 - Math.pow(beta1, t));
-      const vHat = vb[i] / (1 - Math.pow(beta2, t));
-      b[i] -= lr * mHat / (Math.sqrt(vHat) + epsilon);
-    }
+  // ─── STEP 1: Z-score normalization ───
+  // Transform [0,1] features to same distribution the model was trained on
+  let input: number[];
+  if (weights.featureMeans && weights.featureStds) {
+    input = features.map((val, i) => {
+      const std = weights!.featureStds[i];
+      if (std === 0 || std < 1e-8) return 0; // Constant feature
+      return (val - weights!.featureMeans[i]) / std;
+    });
+  } else {
+    // Fallback: no normalization (will produce worse predictions)
+    console.warn('[NN] No normalization stats — using raw features');
+    input = features;
   }
 
-  updateMatrix(weights.W1, grads.dW1, adamState.mW1, adamState.vW1);
-  updateVector(weights.b1, grads.db1, adamState.mb1, adamState.vb1);
-  updateMatrix(weights.W2, grads.dW2, adamState.mW2, adamState.vW2);
-  updateVector(weights.b2, grads.db2, adamState.mb2, adamState.vb2);
-  updateMatrix(weights.W3, grads.dW3, adamState.mW3, adamState.vW3);
-  updateVector(weights.b3, grads.db3, adamState.mb3, adamState.vb3);
-  updateMatrix(weights.W4, grads.dW4, adamState.mW4, adamState.vW4);
-  updateVector(weights.b4, grads.db4, adamState.mb4, adamState.vb4);
-}
+  // ─── STEP 2: Forward pass through layers ───
 
-// ─── Training ────────────────────────────────────────────────────
+  // Layer 1: input (40) → hidden1 (256), Dense → BatchNorm → ReLU
+  let h1 = addVec(matMulVec(weights.W1, input), weights.b1);
+  if (weights.bn1) h1 = batchNormInference(h1, weights.bn1);
+  h1 = h1.map(relu);
 
-export interface TrainingConfig {
-  epochs: number;
-  learningRate: number;
-  batchSize: number;
-  validationSplit: number;
-  logInterval: number;
-}
+  // Layer 2: hidden1 (256) → hidden2 (128), Dense → BatchNorm → ReLU
+  let h2 = addVec(matMulVec(weights.W2, h1), weights.b2);
+  if (weights.bn2) h2 = batchNormInference(h2, weights.bn2);
+  h2 = h2.map(relu);
 
-const DEFAULT_CONFIG: TrainingConfig = {
-  epochs: 50,
-  learningRate: 0.001,
-  batchSize: 32,
-  validationSplit: 0.2,
-  logInterval: 10,
-};
+  // Layer 3: hidden2 (128) → hidden3 (64), Dense → BatchNorm → ReLU
+  let h3 = addVec(matMulVec(weights.W3, h2), weights.b3);
+  if (weights.bn3) h3 = batchNormInference(h3, weights.bn3);
+  h3 = h3.map(relu);
 
-/**
- * Train the model on provided feature vectors and labels.
- * @param features 2D array: [numSamples][28]
- * @param labels 1D array: [numSamples] values in [0, 1]
- */
-export async function train(
-  features: number[][],
-  labels: number[],
-  config: Partial<TrainingConfig> = {},
-): Promise<{ finalLoss: number; accuracy: ModelAccuracyMetrics }> {
-  const cfg = { ...DEFAULT_CONFIG, ...config };
+  // Output: hidden3 (64) → output (1), Sigmoid
+  const z4 = addVec(matMulVec(weights.W4, h3), weights.b4);
+  const output = sigmoid(z4[0]);
 
-  if (!isInitialized) {
-    initRandomWeights();
-    isInitialized = true;
-  }
-  initAdamState();
-
-  const splitIdx = Math.floor(features.length * (1 - cfg.validationSplit));
-  const indices = Array.from({ length: features.length }, (_, i) => i);
-  shuffleArray(indices);
-
-  const trainX = indices.slice(0, splitIdx).map(i => features[i]);
-  const trainY = indices.slice(0, splitIdx).map(i => labels[i]);
-  const valX = indices.slice(splitIdx).map(i => features[i]);
-  const valY = indices.slice(splitIdx).map(i => labels[i]);
-
-  console.log(`[NN] Training: ${trainX.length} samples, Validation: ${valX.length} samples`);
-  console.log(`[NN] Architecture: ${INPUT_DIM}→${HIDDEN1_DIM}→${HIDDEN2_DIM}→${HIDDEN3_DIM}→${OUTPUT_DIM} (${TOTAL_PARAMS} params)`);
-  console.log(`[NN] Config: epochs=${cfg.epochs}, lr=${cfg.learningRate}, batch=${cfg.batchSize}`);
-
-  let finalTrainLoss = 0;
-
-  for (let epoch = 0; epoch < cfg.epochs; epoch++) {
-    const epochIndices = Array.from({ length: trainX.length }, (_, i) => i);
-    shuffleArray(epochIndices);
-
-    let epochLoss = 0;
-
-    for (let batchStart = 0; batchStart < trainX.length; batchStart += cfg.batchSize) {
-      const batchEnd = Math.min(batchStart + cfg.batchSize, trainX.length);
-      const batchGrads: Gradients = {
-        dW1: zerosMatrix(INPUT_DIM, HIDDEN1_DIM), db1: zerosVector(HIDDEN1_DIM),
-        dW2: zerosMatrix(HIDDEN1_DIM, HIDDEN2_DIM), db2: zerosVector(HIDDEN2_DIM),
-        dW3: zerosMatrix(HIDDEN2_DIM, HIDDEN3_DIM), db3: zerosVector(HIDDEN3_DIM),
-        dW4: zerosMatrix(HIDDEN3_DIM, OUTPUT_DIM), db4: zerosVector(OUTPUT_DIM),
-      };
-
-      let batchLoss = 0;
-      const batchSize = batchEnd - batchStart;
-
-      for (let b = batchStart; b < batchEnd; b++) {
-        const idx = epochIndices[b];
-        const fwd = forward(trainX[idx]);
-        const grads = backward(trainX[idx], trainY[idx], fwd);
-
-        for (let i = 0; i < INPUT_DIM; i++)
-          for (let j = 0; j < HIDDEN1_DIM; j++)
-            batchGrads.dW1[i][j] += grads.dW1[i][j] / batchSize;
-        for (let j = 0; j < HIDDEN1_DIM; j++)
-          batchGrads.db1[j] += grads.db1[j] / batchSize;
-
-        for (let i = 0; i < HIDDEN1_DIM; i++)
-          for (let j = 0; j < HIDDEN2_DIM; j++)
-            batchGrads.dW2[i][j] += grads.dW2[i][j] / batchSize;
-        for (let j = 0; j < HIDDEN2_DIM; j++)
-          batchGrads.db2[j] += grads.db2[j] / batchSize;
-
-        for (let i = 0; i < HIDDEN2_DIM; i++)
-          for (let j = 0; j < HIDDEN3_DIM; j++)
-            batchGrads.dW3[i][j] += grads.dW3[i][j] / batchSize;
-        for (let j = 0; j < HIDDEN3_DIM; j++)
-          batchGrads.db3[j] += grads.db3[j] / batchSize;
-
-        for (let i = 0; i < HIDDEN3_DIM; i++)
-          for (let j = 0; j < OUTPUT_DIM; j++)
-            batchGrads.dW4[i][j] += grads.dW4[i][j] / batchSize;
-        for (let j = 0; j < OUTPUT_DIM; j++)
-          batchGrads.db4[j] += grads.db4[j] / batchSize;
-
-        batchLoss += (fwd.output - trainY[idx]) ** 2;
-      }
-
-      adamUpdate(cfg.learningRate, 0.9, 0.999, 1e-8, batchGrads);
-      epochLoss += batchLoss;
-    }
-
-    finalTrainLoss = epochLoss / trainX.length;
-
-    if ((epoch + 1) % cfg.logInterval === 0 || epoch === 0) {
-      const valLoss = computeMSE(valX, valY);
-      console.log(`[NN] Epoch ${epoch + 1}/${cfg.epochs}  trainLoss: ${finalTrainLoss.toFixed(6)}  valLoss: ${valLoss.toFixed(6)}`);
-    }
+  // Sanity check
+  if (isNaN(output)) {
+    console.error('[NN] NaN output detected — returning 0.5');
+    return 0.5;
   }
 
-  const accuracy = evaluateAccuracy(valX, valY);
-  logAccuracyMetrics(accuracy);
-
-  metadata = {
-    trainedAt: new Date().toISOString(),
-    epochs: cfg.epochs,
-    finalLoss: finalTrainLoss,
-    sampleCount: features.length,
-    architecture: `${INPUT_DIM}→${HIDDEN1_DIM}→${HIDDEN2_DIM}→${HIDDEN3_DIM}→${OUTPUT_DIM}`,
-    accuracy,
-  };
-
-  await saveWeights();
-
-  return { finalLoss: finalTrainLoss, accuracy };
-}
-
-function computeMSE(X: number[][], Y: number[]): number {
-  let totalLoss = 0;
-  for (let i = 0; i < X.length; i++) {
-    const pred = forward(X[i]).output;
-    totalLoss += (pred - Y[i]) ** 2;
-  }
-  return totalLoss / X.length;
-}
-
-/** Load pre-trained weights from a JSON object (e.g., bundled asset) */
-export function loadWeightsFromJSON(weightsJSON: NNWeights): void {
-  weights = weightsJSON;
-  isInitialized = true;
-  console.log(`[NN] Loaded pre-trained weights from JSON bundle`);
-}
-
-// ─── Accuracy Evaluation ─────────────────────────────────────────
-
-export function evaluateAccuracy(X: number[][], Y: number[]): ModelAccuracyMetrics {
-  if (X.length === 0) {
-    return {
-      mse: 0, rmse: 0, mae: 0, rSquared: 0,
-      accuracyAtTolerance5: 0, accuracyAtTolerance10: 0,
-      accuracyAtTolerance15: 0, accuracyAtTolerance20: 0,
-      sampleCount: 0,
-    };
-  }
-
-  let sumSqError = 0;
-  let sumAbsError = 0;
-  const yMean = Y.reduce((s, v) => s + v, 0) / Y.length;
-  let ssTot = 0;
-  let within5 = 0, within10 = 0, within15 = 0, within20 = 0;
-
-  for (let i = 0; i < X.length; i++) {
-    const pred = forward(X[i]).output;
-    const predScore = pred * 100;
-    const actualScore = Y[i] * 100;
-    const diff = Math.abs(predScore - actualScore);
-
-    sumSqError += (pred - Y[i]) ** 2;
-    sumAbsError += Math.abs(pred - Y[i]);
-    ssTot += (Y[i] - yMean) ** 2;
-
-    if (diff <= 5) within5++;
-    if (diff <= 10) within10++;
-    if (diff <= 15) within15++;
-    if (diff <= 20) within20++;
-  }
-
-  const n = X.length;
-  const mse = sumSqError / n;
-  const rmse = Math.sqrt(mse);
-  const mae = sumAbsError / n;
-  const rSquared = ssTot > 0 ? 1 - (sumSqError / ssTot) : 0;
-
-  return {
-    mse, rmse, mae, rSquared,
-    accuracyAtTolerance5: (within5 / n) * 100,
-    accuracyAtTolerance10: (within10 / n) * 100,
-    accuracyAtTolerance15: (within15 / n) * 100,
-    accuracyAtTolerance20: (within20 / n) * 100,
-    sampleCount: n,
-  };
-}
-
-export function logAccuracyMetrics(metrics: ModelAccuracyMetrics): void {
-  console.log('\n╔══════════════════════════════════════════╗');
-  console.log('║    ECOTRACE Neural Network Accuracy      ║');
-  console.log('╠══════════════════════════════════════════╣');
-  console.log(`║  MSE:              ${metrics.mse.toFixed(6).padStart(18)}  ║`);
-  console.log(`║  RMSE:             ${metrics.rmse.toFixed(6).padStart(18)}  ║`);
-  console.log(`║  MAE:              ${metrics.mae.toFixed(6).padStart(18)}  ║`);
-  console.log(`║  R²:               ${metrics.rSquared.toFixed(6).padStart(18)}  ║`);
-  console.log('╠══════════════════════════════════════════╣');
-  console.log(`║  Within ±5 pts:    ${(metrics.accuracyAtTolerance5.toFixed(1) + '%').padStart(18)}  ║`);
-  console.log(`║  Within ±10 pts:   ${(metrics.accuracyAtTolerance10.toFixed(1) + '%').padStart(18)}  ║`);
-  console.log(`║  Within ±15 pts:   ${(metrics.accuracyAtTolerance15.toFixed(1) + '%').padStart(18)}  ║`);
-  console.log(`║  Within ±20 pts:   ${(metrics.accuracyAtTolerance20.toFixed(1) + '%').padStart(18)}  ║`);
-  console.log(`║  Validation N:     ${String(metrics.sampleCount).padStart(18)}  ║`);
-  console.log('╚══════════════════════════════════════════╝\n');
+  return output; // 0-1 range, multiply by 100 for eco-score
 }
 
 // ─── Persistence ─────────────────────────────────────────────────
 
-async function saveWeights(): Promise<void> {
-  if (!weights) return;
-  try {
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(weights));
-    if (metadata) {
-      await AsyncStorage.setItem(METADATA_KEY, JSON.stringify(metadata));
-    }
-    console.log('[NN] Weights saved to AsyncStorage');
-  } catch (e) {
-    console.error('[NN] Failed to save weights:', e);
-  }
-}
-
 export async function clearCachedWeights(): Promise<void> {
   await AsyncStorage.removeItem(STORAGE_KEY);
-  await AsyncStorage.removeItem(METADATA_KEY);
   isInitialized = false;
   weights = null;
-  metadata = null;
   console.log('[NN] Cleared cached weights');
 }
 
 // ─── Status ──────────────────────────────────────────────────────
 
 export function getModelStatus() {
+  const totalParams = weights
+    ? (weights.W1.length * weights.W1[0].length + weights.b1.length +
+       weights.W2.length * weights.W2[0].length + weights.b2.length +
+       weights.W3.length * weights.W3[0].length + weights.b3.length +
+       weights.W4.length * weights.W4[0].length + weights.b4.length)
+    : 0;
+
   return {
     isInitialized,
-    hasTrained: metadata !== null,
-    totalParameters: TOTAL_PARAMS,
+    hasTrained: isInitialized && weights !== null,
+    totalParameters: totalParams,
     architecture: `${INPUT_DIM}→${HIDDEN1_DIM}→${HIDDEN2_DIM}→${HIDDEN3_DIM}→${OUTPUT_DIM}`,
-    trainingMetadata: metadata,
+    hasNormalization: !!(weights?.featureMeans && weights?.featureStds),
+    hasBatchNorm: !!(weights?.bn1),
     learningType: 'Supervised Learning (Regression)',
     algorithm: 'Feedforward Neural Network (Multi-Layer Perceptron)',
-    optimizer: 'Adam (Adaptive Moment Estimation)',
-    lossFunction: 'Mean Squared Error (MSE)',
-    activations: 'ReLU (hidden), Sigmoid (output)',
-    independentVariables: [
-      'categoryEnvironmentScore', 'categoryProcessingLevel', 'categoryHealthScore',
+    lossFunction: 'Mean Squared Error (MSE) + L2 Regularization',
+    activations: 'BatchNorm+ReLU (hidden), Sigmoid (output)',
+    features: [
+      'categoryEnvScore_dataDriven',
       'novaGroupNormalized', 'isUltraProcessed', 'ingredientComplexity',
       'hasPlasticPackaging', 'hasGlassPackaging', 'hasCardboardPackaging',
       'hasMetalPackaging', 'hasCompostablePackaging', 'packagingMaterialCount',
@@ -620,17 +297,12 @@ export function getModelStatus() {
       'manufacturingSustainability',
       'isVegan', 'isVegetarian', 'hasPalmOil',
       'hasHighSugar', 'hasHighSaturatedFat', 'hasHighSodium',
+      'hasHighFat', 'hasLowFat',
+      'isMeatProduct', 'isFishSeafood', 'isDairyProduct', 'isPlantBased',
+      'isFruitVegetable', 'isCereal', 'isBeverage', 'isFatOil',
+      'isSweetSnack', 'isCanned', 'isFrozen', 'isReadyMeal',
     ],
     dependentVariable: 'ecoscore (0-1 normalized sustainability score)',
     implementation: 'Pure TypeScript — zero native dependencies (Hermes-safe)',
   };
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────
-
-function shuffleArray<T>(arr: T[]): void {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
 }

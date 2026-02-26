@@ -1,11 +1,15 @@
-// services/featureEncoder.ts — Feature Engineering for ECOTRACE ML Model v2.0
+// services/featureEncoder.ts — Feature Engineering for ECOTRACE ML Model v4.0
 //
-// Converts raw Open Food Facts product data into a normalized 28-dimensional
+// Converts raw Open Food Facts product data into a normalized 40-dimensional
 // feature vector for neural network input.
 //
-// Every feature is normalized to [0, 1] range.
-// Missing data defaults to 0.5 (neutral midpoint) for continuous features
-// and 0 for binary features.
+// CRITICAL: This file MUST stay in EXACT sync with scripts/trainModel.js.
+//   - Feature order must match encodeProduct() in trainModel.js
+//   - CATEGORY_ENV_SCORES must match trainModel.js
+//   - Food group tag arrays must match trainModel.js
+//   - NUM_FEATURES must match NUM_FEATURES in trainModel.js
+//
+// Run `node scripts/validateSync.js` to verify sync before deployment.
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -41,9 +45,9 @@ export interface LocalProduct {
   ocrText?: string;
 }
 
-/** The 28-feature vector output */
+/** The 40-feature vector output */
 export interface FeatureVector {
-  features: number[];         // length 28, all values in [0, 1]
+  features: number[];         // length 40, all values in [0, 1]
   featureNames: string[];     // descriptive name for each feature
   nonDefaultCount: number;    // how many features differ from default (data richness)
   valid: boolean;             // false if critical data is missing
@@ -51,43 +55,57 @@ export interface FeatureVector {
 
 // ─── Constants ───────────────────────────────────────────────────
 
-export const NUM_FEATURES = 28;
+export const NUM_FEATURES = 40;
 
 export const FEATURE_NAMES: string[] = [
-  // Category Analysis (3)
-  'categoryEnvironmentScore',    // [0]
-  'categoryProcessingLevel',     // [1]
-  'categoryHealthScore',         // [2]
+  // Category Analysis (1)
+  'categoryEnvScore_dataDriven',   // [0]
   // Processing Level (3)
-  'novaGroupNormalized',         // [3]
-  'isUltraProcessed',            // [4]
-  'ingredientComplexity',        // [5]
+  'novaGroupNormalized',           // [1]
+  'isUltraProcessed',              // [2]
+  'ingredientComplexity',          // [3]
   // Packaging Features (6)
-  'hasPlasticPackaging',         // [6]
-  'hasGlassPackaging',           // [7]
-  'hasCardboardPackaging',       // [8]
-  'hasMetalPackaging',           // [9]
-  'hasCompostablePackaging',     // [10]
-  'packagingMaterialCount',      // [11]
+  'hasPlasticPackaging',           // [4]
+  'hasGlassPackaging',             // [5]
+  'hasCardboardPackaging',         // [6]
+  'hasMetalPackaging',             // [7]
+  'hasCompostablePackaging',       // [8]
+  'packagingMaterialCount',        // [9]
   // Certifications (6)
-  'hasOrganicCert',              // [12]
-  'hasFairTradeCert',            // [13]
-  'hasRainforestAllianceCert',   // [14]
-  'hasEUEcolabel',               // [15]
-  'hasMSCCert',                  // [16]
-  'certificationTotalScore',     // [17]
+  'hasOrganicCert',                // [10]
+  'hasFairTradeCert',              // [11]
+  'hasRainforestAllianceCert',     // [12]
+  'hasEUEcolabel',                 // [13]
+  'hasMSCCert',                    // [14]
+  'certificationTotalScore',       // [15]
   // Origin & Sustainability (4)
-  'originSustainabilityScore',   // [18]
-  'hasLocalOrigin',              // [19]
-  'transportEstimateScore',      // [20]
-  'manufacturingSustainability', // [21]
-  // Ingredient Analysis (6)
-  'isVegan',                     // [22]
-  'isVegetarian',                // [23]
-  'hasPalmOil',                  // [24]
-  'hasHighSugar',                // [25]
-  'hasHighSaturatedFat',         // [26]
-  'hasHighSodium',               // [27]
+  'originSustainabilityScore',     // [16]
+  'hasLocalOrigin',                // [17]
+  'transportEstimateScore',        // [18]
+  'manufacturingSustainability',   // [19]
+  // Ingredient Analysis (3)
+  'isVegan',                       // [20]
+  'isVegetarian',                  // [21]
+  'hasPalmOil',                    // [22]
+  // Nutrient Levels (5)
+  'hasHighSugar',                  // [23]
+  'hasHighSaturatedFat',           // [24]
+  'hasHighSodium',                 // [25]
+  'hasHighFat',                    // [26]
+  'hasLowFat',                     // [27]
+  // Food Group Binaries (12)
+  'isMeatProduct',                 // [28]
+  'isFishSeafood',                 // [29]
+  'isDairyProduct',                // [30]
+  'isPlantBased',                  // [31]
+  'isFruitVegetable',             // [32]
+  'isCereal',                      // [33]
+  'isBeverage',                    // [34]
+  'isFatOil',                      // [35]
+  'isSweetSnack',                  // [36]
+  'isCanned',                      // [37]
+  'isFrozen',                      // [38]
+  'isReadyMeal',                   // [39]
 ];
 
 // ─── Helper: tag matching ────────────────────────────────────────
@@ -98,12 +116,6 @@ function hasTag(tags: string[] | null | undefined, keyword: string): boolean {
   return tags.some(tag => tag.toLowerCase().includes(kw));
 }
 
-function hasAnyTag(tags: string[] | null | undefined, keywords: string[]): boolean {
-  if (!tags || tags.length === 0) return false;
-  const lower = tags.map(t => t.toLowerCase());
-  return keywords.some(kw => lower.some(t => t.includes(kw.toLowerCase())));
-}
-
 function hasExactTag(tags: string[] | null | undefined, exactTags: string[]): boolean {
   if (!tags || tags.length === 0) return false;
   const lower = tags.map(t => t.toLowerCase());
@@ -111,168 +123,203 @@ function hasExactTag(tags: string[] | null | undefined, exactTags: string[]): bo
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// FEATURE ENCODERS — 28 features, all normalized 0-1
+// FEATURE ENCODERS — 40 features, all normalized 0-1
 // ═══════════════════════════════════════════════════════════════════
 
-// ─── Category Analysis (Features 0-2) ────────────────────────────
+// ─── DATA-DRIVEN CATEGORY SCORES (Feature 0) ────────────────────
+// Derived from actual eco-score averages across 10,000+ products.
+// Each entry = (average_ecoscore / 100) for that category.
+// MUST match CATEGORY_ENV_SCORES in trainModel.js exactly.
 
 const CATEGORY_ENV_SCORES: Record<string, number> = {
-  'en:organic-foods': 0.92, 'en:organic': 0.92,
-  'en:plant-based-foods': 0.88, 'en:plant-based-foods-and-beverages': 0.88,
-  'en:fruits': 0.88, 'en:vegetables-based-foods': 0.92, 'en:vegetables': 0.92,
-  'en:legumes': 0.85, 'en:nuts': 0.80,
-  'en:fresh-foods': 0.82, 'en:cereals-and-potatoes': 0.62, 'en:cereals': 0.62,
-  'en:breads': 0.58, 'en:beverages': 0.50, 'en:waters': 0.65,
-  'en:fruit-juices': 0.55, 'en:sodas': 0.30,
-  'en:fish': 0.48, 'en:fishes': 0.48, 'en:seafood': 0.48,
-  'en:dairies': 0.42, 'en:dairy': 0.42, 'en:cheeses': 0.40, 'en:milks': 0.50,
-  'en:plant-based-milks': 0.75, 'en:tofu': 0.82,
-  'en:snacks': 0.38, 'en:sweet-snacks': 0.32, 'en:salty-snacks': 0.32,
-  'en:chocolates': 0.35, 'en:sugary-snacks': 0.28,
-  'en:frozen-foods': 0.38, 'en:canned-foods': 0.42,
-  'en:meals': 0.45, 'en:prepared-meals': 0.35, 'en:ready-meals': 0.32,
-  'en:sauces': 0.45, 'en:condiments': 0.45,
-  'en:meats': 0.18, 'en:pork': 0.20, 'en:beef': 0.10, 'en:lamb': 0.12,
-  'en:poultry': 0.28, 'en:chicken': 0.28,
-  'en:processed-meats': 0.12, 'en:sausages': 0.15,
-  'en:eggs': 0.55, 'en:honey': 0.60,
+  'en:poultry-hams': 0.221, 'en:yogurt-drinks': 0.223,
+  'en:pork-and-its-products': 0.238, 'en:prepared-meats': 0.252,
+  'en:breaded-fish': 0.255, 'en:hams': 0.257, 'en:white-hams': 0.258,
+  'en:tunas': 0.263, 'en:dairy-drinks': 0.264, 'en:meats': 0.275,
+  'en:fish-preparations': 0.278, 'en:chickens': 0.280,
+  'en:chicken-and-its-products': 0.284, 'en:poultries': 0.286,
+  'en:sardines': 0.288, 'en:canned-sardines': 0.288,
+  'en:canned-fishes': 0.291, 'en:almonds': 0.296,
+  'en:fishes-and-their-products': 0.296, 'en:fishes': 0.299,
+  'en:seafood': 0.300, 'en:fatty-fishes': 0.304,
+  'en:breaded-products': 0.308, 'en:nuts': 0.314,
+  'en:meats-and-their-products': 0.317, 'en:butters': 0.332,
+  'en:dairy-spreads': 0.333, 'en:milkfat': 0.335,
+  'en:animal-fats': 0.343, 'en:rices': 0.345,
+  'en:milk-chocolates': 0.351, 'en:chocolates': 0.360,
+  'en:dark-chocolates': 0.362, 'en:chocolate-cakes': 0.363,
+  'en:cocoa-and-its-products': 0.381, 'en:chocolate-candies': 0.396,
+  'en:microwave-meals': 0.402, 'en:extruded-flakes': 0.411,
+  'en:hard-cheeses': 0.412, 'en:filled-cereals': 0.414,
+  'en:meals-with-meat': 0.420, 'en:hazelnut-spreads': 0.421,
+  'en:extruded-cereals': 0.423, 'en:fruit-juices': 0.424,
+  'en:chocolate-spreads': 0.426, 'en:juices-and-nectars': 0.426,
+  'en:peanut-butters': 0.427, 'en:fruit-based-beverages': 0.430,
+  'en:olive-oils': 0.431, 'en:cheese-spreads': 0.432,
+  'en:nut-butters': 0.433, 'en:french-cheeses': 0.436,
+  'en:cow-cheeses': 0.439, 'en:pasteurized-cheeses': 0.439,
+  'en:bars': 0.441, 'en:extra-virgin-olive-oils': 0.442,
+  'en:nuts-and-their-products': 0.444, 'en:chocolate-biscuits': 0.446,
+  'en:cereal-grains': 0.446, 'en:spreadable-fats': 0.452,
+  'en:cheeses': 0.455, 'en:milks': 0.459, 'en:fats': 0.458,
+  'en:mayonnaises': 0.458, 'en:vegetable-oils': 0.467,
+  'en:wafers': 0.463, 'en:filled-biscuits': 0.471,
+  'en:confectioneries': 0.476, 'en:pestos': 0.476,
+  'en:cereal-bars': 0.481, 'en:cakes': 0.489,
+  'en:breakfast-cereals-rich-in-fibre': 0.490,
+  'en:sweet-snacks': 0.496, 'en:spreads': 0.509,
+  'en:pasta-dishes': 0.515, 'en:uht-milks': 0.518,
+  'en:biscuits-and-cakes': 0.521, 'en:biscuits': 0.521,
+  'en:canned-foods': 0.525, 'en:vegetable-fats': 0.525,
+  'en:dairies': 0.527, 'en:beverages': 0.532, 'en:snacks': 0.536,
+  'en:biscuits-and-crackers': 0.546, 'en:fermented-milk-products': 0.551,
+  'en:pasta-sauces': 0.555, 'en:chocolate-cereals': 0.557,
+  'en:fermented-foods': 0.558, 'en:seeds': 0.565,
+  'en:breakfast-cereals': 0.574, 'en:breakfasts': 0.575,
+  'en:sweet-spreads': 0.579, 'en:plant-based-beverages': 0.583,
+  'en:plant-based-spreads': 0.586, 'en:frozen-foods': 0.587,
+  'en:brioches': 0.591, 'en:legumes-and-their-products': 0.594,
+  'en:dried-products': 0.602, 'en:fruits': 0.603,
+  'en:meals': 0.606, 'en:cereals-and-their-products': 0.610,
+  'en:margarines': 0.610, 'en:groceries': 0.619,
+  'en:sweet-pastries-and-pies': 0.620, 'en:viennoiseries': 0.620,
+  'en:noodles': 0.624, 'en:plant-based-foods-and-beverages': 0.629,
+  'en:sauces': 0.629, 'en:condiments': 0.633,
+  'en:plant-based-foods': 0.639, 'en:shortbread-cookies': 0.639,
+  'en:yogurts': 0.651, 'en:candies': 0.653,
+  'en:unsweetened-beverages': 0.654, 'en:cereals-and-potatoes': 0.657,
+  'en:eggs': 0.658, 'en:desserts': 0.672, 'en:dairy-desserts': 0.673,
+  'en:legumes': 0.676, 'en:jams': 0.677, 'en:pastas': 0.677,
+  'en:fermented-dairy-desserts': 0.680, 'en:creams': 0.683,
+  'en:salty-snacks': 0.685, 'en:meat-analogues': 0.686,
+  'en:cereal-based-drinks': 0.688, 'en:corn-chips': 0.689,
+  'en:fruits-based-foods': 0.693, 'en:sweeteners': 0.694,
+  'en:meat-alternatives': 0.701, 'en:crackers-appetizers': 0.702,
+  'en:mustards': 0.702, 'en:milk-substitutes': 0.717,
+  'en:plant-based-milk-alternatives': 0.717, 'en:appetizers': 0.719,
+  'en:mueslis': 0.724, 'en:dairy-substitutes': 0.726,
+  'en:fruits-and-vegetables-based-foods': 0.727,
+  'en:chips-and-fries': 0.732, 'en:crisps': 0.735,
+  'en:vegetables-based-foods': 0.738, 'en:ice-creams': 0.741,
+  'en:rolled-flakes': 0.742, 'en:cereal-pastas': 0.745,
+  'en:mueslis-with-fruits': 0.749, 'en:dry-pastas': 0.749,
+  'en:plain-fermented-dairy-desserts': 0.757, 'en:plain-yogurts': 0.758,
+  'en:potato-crisps': 0.759, 'en:breads': 0.760,
+  'en:skyrs': 0.762, 'en:sliced-breads': 0.765,
+  'en:tomato-sauces': 0.766, 'en:soups': 0.767,
+  'en:wholemeal-breads': 0.770, 'en:ketchup': 0.770,
+  'en:vegetables': 0.771, 'en:canned-plant-based-foods': 0.780,
+  'en:honeys': 0.783, 'en:canned-vegetables': 0.784,
+  'en:toasts': 0.785, 'en:pulses': 0.785,
+  'en:prepared-vegetables': 0.786, 'en:teas': 0.790,
+  'en:rusks': 0.795, 'en:vegetable-soups': 0.796,
+  'en:canned-legumes': 0.797, 'en:lentils': 0.806,
+  'en:non-dairy-desserts': 0.807, 'en:non-dairy-yogurts': 0.807,
+  'en:compotes': 0.835, 'en:apple-compotes': 0.836,
 };
 
-const CATEGORY_PROCESSING: Record<string, number> = {
-  'en:fresh-foods': 0.90, 'en:fruits': 0.95, 'en:vegetables': 0.95,
-  'en:organic-foods': 0.80, 'en:plant-based-foods': 0.75,
-  'en:cereals': 0.60, 'en:breads': 0.55,
-  'en:dairies': 0.55, 'en:milks': 0.65, 'en:cheeses': 0.50,
-  'en:meals': 0.40, 'en:prepared-meals': 0.25, 'en:ready-meals': 0.20,
-  'en:snacks': 0.30, 'en:sweet-snacks': 0.20, 'en:salty-snacks': 0.25,
-  'en:frozen-foods': 0.35, 'en:canned-foods': 0.40,
-  'en:beverages': 0.50, 'en:sodas': 0.15, 'en:waters': 0.90,
-  'en:processed-meats': 0.15, 'en:sausages': 0.20,
-};
-
-const CATEGORY_HEALTH: Record<string, number> = {
-  'en:fruits': 0.90, 'en:vegetables': 0.92, 'en:legumes': 0.88,
-  'en:nuts': 0.75, 'en:cereals': 0.65, 'en:breads': 0.55,
-  'en:fish': 0.70, 'en:seafood': 0.68,
-  'en:dairies': 0.55, 'en:milks': 0.60, 'en:cheeses': 0.45,
-  'en:meats': 0.40, 'en:poultry': 0.50, 'en:beef': 0.35,
-  'en:snacks': 0.25, 'en:sweet-snacks': 0.15, 'en:salty-snacks': 0.20,
-  'en:chocolates': 0.25, 'en:sodas': 0.10, 'en:waters': 0.85,
-  'en:beverages': 0.45, 'en:processed-meats': 0.15,
-  'en:prepared-meals': 0.30, 'en:frozen-foods': 0.35,
-};
-
-function encodeCategoryMap(tags: string[] | undefined, map: Record<string, number>): number {
+/**
+ * Encode category score using specificity-weighted average.
+ * MUST match encodeCategoryScore() in trainModel.js exactly.
+ */
+function encodeCategoryScore(tags: string[] | undefined): number {
   if (!tags || tags.length === 0) return 0.5;
-  let best = 0.5;
+
+  let totalScore = 0;
+  let totalWeight = 0;
+
   for (const tag of tags) {
     const lower = tag.toLowerCase();
-    if (map[lower] !== undefined) {
-      best = Math.max(best, map[lower]);
-    }
-    // Partial match fallback
-    for (const [key, score] of Object.entries(map)) {
-      const cleanKey = key.replace('en:', '');
-      const cleanTag = lower.replace('en:', '');
-      if (cleanTag.includes(cleanKey) || cleanKey.includes(cleanTag)) {
-        best = Math.max(best, score);
-      }
+    if (CATEGORY_ENV_SCORES[lower] !== undefined) {
+      // Weight by specificity: more specific categories (longer names) get higher weight
+      const specificity = lower.split('-').length;
+      totalScore += CATEGORY_ENV_SCORES[lower] * specificity;
+      totalWeight += specificity;
     }
   }
-  return best;
+
+  if (totalWeight === 0) return 0.5;
+  return totalScore / totalWeight;
 }
 
-function encodeCategoryEnvironment(tags?: string[]): number {
-  return encodeCategoryMap(tags, CATEGORY_ENV_SCORES);
+// ─── Food Group Binary Features (Features 28-39) ────────────────
+// MUST match tag arrays in trainModel.js exactly.
+
+const MEAT_TAGS = ['en:meats', 'en:meats-and-their-products', 'en:prepared-meats',
+  'en:pork', 'en:beef', 'en:poultry', 'en:poultries', 'en:chicken',
+  'en:chickens', 'en:lamb', 'en:sausages', 'en:hams', 'en:white-hams',
+  'en:pork-and-its-products', 'en:chicken-and-its-products',
+  'en:cooked-poultries', 'en:meat-preparations'];
+
+const FISH_TAGS = ['en:fishes', 'en:fishes-and-their-products', 'en:seafood',
+  'en:canned-fishes', 'en:sardines', 'en:tunas', 'en:mackerels',
+  'en:fatty-fishes', 'en:fish-fillets', 'en:fish-preparations',
+  'en:smoked-fishes', 'en:breaded-fish'];
+
+const DAIRY_TAGS = ['en:dairies', 'en:cheeses', 'en:milks', 'en:yogurts',
+  'en:butters', 'en:creams', 'en:fermented-milk-products', 'en:dairy-desserts',
+  'en:cow-cheeses', 'en:fresh-cheeses', 'en:hard-cheeses',
+  'en:dairy-drinks', 'en:dairy-spreads', 'en:skyrs',
+  'en:cheese-spreads', 'en:plain-yogurts', 'en:fruit-yogurts'];
+
+const PLANT_BASED_TAGS = ['en:plant-based-foods', 'en:plant-based-foods-and-beverages',
+  'en:plant-based-beverages', 'en:plant-based-spreads',
+  'en:plant-based-milk-alternatives', 'en:milk-substitutes',
+  'en:dairy-substitutes', 'en:meat-alternatives', 'en:meat-analogues',
+  'en:non-dairy-desserts', 'en:non-dairy-yogurts', 'en:vegan-products'];
+
+const FRUIT_VEG_TAGS = ['en:fruits', 'en:vegetables', 'en:vegetables-based-foods',
+  'en:fruits-and-vegetables-based-foods', 'en:fruits-based-foods',
+  'en:prepared-vegetables', 'en:canned-vegetables', 'en:frozen-vegetables',
+  'en:compotes', 'en:vegetable-soups', 'en:tomatoes',
+  'en:legumes', 'en:legumes-and-their-products', 'en:pulses', 'en:lentils',
+  'en:chickpeas', 'en:canned-legumes', 'en:canned-plant-based-foods'];
+
+const CEREAL_TAGS = ['en:cereals-and-potatoes', 'en:cereals-and-their-products',
+  'en:breakfast-cereals', 'en:breads', 'en:pastas', 'en:rices',
+  'en:cereal-flakes', 'en:mueslis', 'en:cereal-bars',
+  'en:sliced-breads', 'en:wholemeal-breads', 'en:dry-pastas',
+  'en:noodles', 'en:rolled-flakes', 'en:toasts', 'en:rusks',
+  'en:extruded-cereals', 'en:brioches', 'en:cereal-grains'];
+
+const BEVERAGE_TAGS = ['en:beverages', 'en:beverages-and-beverages-preparations',
+  'en:fruit-juices', 'en:juices-and-nectars', 'en:fruit-based-beverages',
+  'en:unsweetened-beverages', 'en:sweetened-beverages', 'en:teas',
+  'en:hot-beverages', 'en:instant-beverages', 'en:alcoholic-beverages',
+  'en:non-alcoholic-beverages', 'en:tea-based-beverages', 'en:iced-teas',
+  'en:cereal-based-drinks', 'en:oat-based-drinks'];
+
+const FAT_OIL_TAGS = ['en:fats', 'en:vegetable-oils', 'en:olive-oils',
+  'en:vegetable-fats', 'en:spreadable-fats', 'en:animal-fats',
+  'en:milkfat', 'en:extra-virgin-olive-oils', 'en:margarines',
+  'en:light-margarines'];
+
+const SWEET_TAGS = ['en:sweet-snacks', 'en:chocolates', 'en:chocolate-biscuits',
+  'en:biscuits-and-cakes', 'en:biscuits', 'en:cakes', 'en:confectioneries',
+  'en:chocolate-candies', 'en:candies', 'en:cocoa-and-its-products',
+  'en:chocolate-spreads', 'en:hazelnut-spreads', 'en:dark-chocolates',
+  'en:milk-chocolates', 'en:wafers', 'en:filled-biscuits'];
+
+const CANNED_TAGS = ['en:canned-foods', 'en:canned-fishes', 'en:canned-vegetables',
+  'en:canned-plant-based-foods', 'en:canned-legumes', 'en:canned-sardines',
+  'en:canned-meals', 'en:canned-tunas'];
+
+const FROZEN_TAGS = ['en:frozen-foods', 'en:frozen-ready-made-meals',
+  'en:frozen-vegetables', 'en:frozen-desserts', 'en:frozen-plant-based-foods',
+  'en:frozen-fried-potatoes', 'en:ice-creams', 'en:ice-creams-and-sorbets'];
+
+const READY_MEAL_TAGS = ['en:meals', 'en:meals-with-meat', 'en:meals-with-chicken',
+  'en:meals-with-fish', 'en:microwave-meals', 'en:pasta-dishes',
+  'en:rice-dishes', 'en:sandwiches', 'en:pizzas', 'en:combination-meals',
+  'en:fresh-meals', 'en:prepared-salads', 'en:poultry-meals'];
+
+function hasFoodGroup(cats: string[] | undefined, groupTags: string[]): number {
+  if (!cats || cats.length === 0) return 0;
+  const lowerCats = cats.map(c => c.toLowerCase());
+  return groupTags.some(t => lowerCats.includes(t.toLowerCase())) ? 1 : 0;
 }
 
-function encodeCategoryProcessing(tags?: string[]): number {
-  return encodeCategoryMap(tags, CATEGORY_PROCESSING);
-}
-
-function encodeCategoryHealth(tags?: string[]): number {
-  return encodeCategoryMap(tags, CATEGORY_HEALTH);
-}
-
-// ─── Processing Level (Features 3-5) ─────────────────────────────
-
-function encodeNovaGroup(nova: number | null | undefined): number {
-  if (nova === null || nova === undefined) return 0.5;
-  // NOVA 1 = best (1.0), NOVA 4 = worst (0.0)
-  return Math.max(0, Math.min(1, 1 - ((nova - 1) / 3)));
-}
-
-function encodeIsUltraProcessed(nova: number | null | undefined): number {
-  return nova === 4 ? 1 : 0;
-}
-
-function encodeIngredientComplexity(ingredientsN: number | null | undefined): number {
-  if (ingredientsN === null || ingredientsN === undefined) return 0.5;
-  if (ingredientsN <= 0) return 0.5;
-  // Fewer ingredients = better (more natural). Cap at 50.
-  return Math.max(0, Math.min(1, 1 - (ingredientsN / 50)));
-}
-
-// ─── Packaging Features (Features 6-11) ──────────────────────────
-
-function combinePackagingText(product: OFFRawProduct): string[] {
-  const allTags: string[] = [];
-  if (product.packaging_tags) allTags.push(...product.packaging_tags);
-  if (product.packaging_materials_tags) allTags.push(...product.packaging_materials_tags);
-  if (product.packaging_text) {
-    // Split text into pseudo-tags
-    const words = product.packaging_text.toLowerCase().split(/[\s,;/]+/);
-    allTags.push(...words);
-  }
-  return allTags.map(t => t.toLowerCase());
-}
-
-function encodeHasPlasticPackaging(product: OFFRawProduct): number {
-  const tags = combinePackagingText(product);
-  const plasticKw = ['plastic', 'pet', 'hdpe', 'ldpe', 'pp', 'ps', 'pvc', 'polystyrene', 'polyethylene', 'polypropylene', 'film', 'wrap'];
-  return plasticKw.some(kw => tags.some(t => t.includes(kw))) ? 1 : 0;
-}
-
-function encodeHasGlassPackaging(product: OFFRawProduct): number {
-  const tags = combinePackagingText(product);
-  return tags.some(t => t.includes('glass') || t.includes('verre') || t.includes('jar')) ? 1 : 0;
-}
-
-function encodeHasCardboardPackaging(product: OFFRawProduct): number {
-  const tags = combinePackagingText(product);
-  const kw = ['cardboard', 'paper', 'carton', 'tetra', 'kraft', 'papier'];
-  return kw.some(k => tags.some(t => t.includes(k))) ? 1 : 0;
-}
-
-function encodeHasMetalPackaging(product: OFFRawProduct): number {
-  const tags = combinePackagingText(product);
-  const kw = ['metal', 'aluminum', 'aluminium', 'tin', 'steel', 'can'];
-  return kw.some(k => tags.some(t => t.includes(k))) ? 1 : 0;
-}
-
-function encodeHasCompostablePackaging(product: OFFRawProduct): number {
-  const tags = combinePackagingText(product);
-  const kw = ['compostable', 'biodegradable', 'bioplastic'];
-  return kw.some(k => tags.some(t => t.includes(k))) ? 1 : 0;
-}
-
-function encodePackagingMaterialCount(product: OFFRawProduct): number {
-  // Count distinct material types found
-  let count = 0;
-  const tags = combinePackagingText(product);
-  if (tags.length === 0) return 0.5; // Unknown
-  const materials = ['plastic', 'glass', 'cardboard', 'paper', 'metal', 'aluminum', 'tin', 'wood', 'cork'];
-  for (const mat of materials) {
-    if (tags.some(t => t.includes(mat))) count++;
-  }
-  // Fewer distinct materials = simpler = better? Not necessarily.
-  // Normalize: 0 materials unknown = 0.5, 1 = good (0.8), 2+ = complex (lower)
-  if (count === 0) return 0.5;
-  if (count === 1) return 0.8;
-  return Math.max(0.2, 1 - (count / 5));
-}
-
-// ─── Certifications (Features 12-17) ─────────────────────────────
+// ─── Certifications ──────────────────────────────────────────────
 
 const ORGANIC_TAGS = [
   'en:organic', 'en:usda-organic', 'en:eu-organic',
@@ -307,190 +354,73 @@ const ALL_CERT_TAGS = [
   'en:cradle-to-cradle', 'en:non-gmo', 'en:non-gmo-project',
 ];
 
-function encodeHasOrganic(tags?: string[]): number {
-  return hasExactTag(tags, ORGANIC_TAGS) ? 1 : 0;
-}
-
-function encodeHasFairTrade(tags?: string[]): number {
-  return hasExactTag(tags, FAIRTRADE_TAGS) ? 1 : 0;
-}
-
-function encodeHasRainforest(tags?: string[]): number {
-  return hasExactTag(tags, RAINFOREST_TAGS) ? 1 : 0;
-}
-
-function encodeHasEUEcolabel(tags?: string[]): number {
-  return hasExactTag(tags, EU_ECOLABEL_TAGS) ? 1 : 0;
-}
-
-function encodeHasMSC(tags?: string[]): number {
-  return hasExactTag(tags, MSC_TAGS) ? 1 : 0;
-}
-
-function encodeCertificationTotal(tags?: string[]): number {
-  if (!tags || tags.length === 0) return 0;
-  const lower = tags.map(t => t.toLowerCase());
-  let count = 0;
-  for (const certTag of ALL_CERT_TAGS) {
-    if (lower.some(t => t.includes(certTag.replace('en:', '')))) count++;
-  }
-  // Normalize: 5+ certifications = max score
-  return Math.min(count / 5, 1);
-}
-
-// ─── Origin & Sustainability (Features 18-21) ────────────────────
+// ─── Origin & Sustainability ─────────────────────────────────────
 
 const ORIGIN_SUSTAINABILITY: Record<string, number> = {
-  // EU countries with strong environmental regulation
   'france': 0.82, 'germany': 0.85, 'italy': 0.78, 'spain': 0.76,
   'netherlands': 0.84, 'belgium': 0.82, 'austria': 0.86, 'switzerland': 0.88,
   'sweden': 0.90, 'denmark': 0.88, 'norway': 0.87, 'finland': 0.88,
   'portugal': 0.75, 'ireland': 0.78, 'luxembourg': 0.83,
   'uk': 0.80, 'united kingdom': 0.80,
-  // North America
   'usa': 0.70, 'united states': 0.70, 'canada': 0.72,
-  // Asia-Pacific
   'japan': 0.72, 'south korea': 0.68, 'australia': 0.70, 'new zealand': 0.75,
-  // Developing
   'brazil': 0.45, 'india': 0.42, 'mexico': 0.50, 'argentina': 0.48,
   'thailand': 0.45, 'vietnam': 0.40, 'indonesia': 0.38,
   'china': 0.35, 'bangladesh': 0.30,
-  // Generic
   'european union': 0.80, 'eu': 0.80, 'europe': 0.78,
-  'local': 0.95, 'regional': 0.90, 'national': 0.85,
-  'imported': 0.40,
+  'local': 0.95, 'regional': 0.90, 'national': 0.85, 'imported': 0.40,
 };
 
-function encodeOriginSustainability(product: OFFRawProduct): number {
-  // Check origins_tags first (structured), then origins text
-  const tags = product.origins_tags || [];
-  const text = product.origins || '';
+// ─── Packaging Helpers ───────────────────────────────────────────
 
-  if (tags.length === 0 && !text) return 0.5;
-
-  // Check tags
-  for (const tag of tags) {
-    const clean = tag.replace('en:', '').replace(/-/g, ' ').toLowerCase();
-    for (const [kw, score] of Object.entries(ORIGIN_SUSTAINABILITY)) {
-      if (clean.includes(kw)) return score;
-    }
+function combinePackagingText(product: OFFRawProduct): string[] {
+  const allTags: string[] = [];
+  if (product.packaging_tags) allTags.push(...product.packaging_tags);
+  if (product.packaging_materials_tags) allTags.push(...product.packaging_materials_tags);
+  if (product.packaging_text) {
+    const words = product.packaging_text.toLowerCase().split(/[\s,;/]+/);
+    allTags.push(...words);
   }
+  return allTags.map(t => t.toLowerCase());
+}
 
-  // Check text
-  const lower = text.toLowerCase();
-  for (const [kw, score] of Object.entries(ORIGIN_SUSTAINABILITY)) {
-    if (lower.includes(kw)) return score;
+// ─── Origin Helpers ──────────────────────────────────────────────
+
+function encodeOriginFromTagsAndText(
+  tags: string[] | undefined,
+  text: string | undefined,
+  map: Record<string, number>,
+): number {
+  if ((!tags || tags.length === 0) && !text) return 0.5;
+  const allSources: string[] = [];
+  if (tags) {
+    for (const tag of tags) allSources.push(tag.replace('en:', '').replace(/-/g, ' ').toLowerCase());
   }
-
+  if (text) allSources.push(text.toLowerCase());
+  const combined = allSources.join(' ');
+  for (const [kw, score] of Object.entries(map)) {
+    if (combined.includes(kw)) return score;
+  }
   return 0.5;
 }
 
-function encodeHasLocalOrigin(product: OFFRawProduct): number {
-  const tags = product.origins_tags || [];
-  const text = (product.origins || '').toLowerCase();
-  const localKw = ['local', 'regional', 'national', 'domestic'];
-
-  for (const kw of localKw) {
-    if (tags.some(t => t.toLowerCase().includes(kw))) return 1;
-    if (text.includes(kw)) return 1;
-  }
-  return 0;
-}
-
 function encodeTransportEstimate(product: OFFRawProduct): number {
-  // Rough distance proxy based on origin
   const tags = product.origins_tags || [];
   const text = (product.origins || '').toLowerCase();
   const combined = [...tags.map(t => t.toLowerCase()), text].join(' ');
-
   if (!combined || combined.trim().length === 0) return 0.5;
-
-  // Local = minimal transport = high score
   if (combined.includes('local') || combined.includes('regional')) return 0.95;
   if (combined.includes('national')) return 0.85;
-
-  // Same continent (EU for EU consumers)
   const euCountries = ['france', 'germany', 'italy', 'spain', 'netherlands', 'belgium',
     'austria', 'portugal', 'ireland', 'sweden', 'denmark', 'norway', 'finland',
     'switzerland', 'poland', 'czech', 'greece', 'hungary', 'romania'];
   if (euCountries.some(c => combined.includes(c))) return 0.75;
-
-  // Same hemisphere
   const nearCountries = ['uk', 'united kingdom', 'morocco', 'tunisia', 'turkey', 'usa', 'canada'];
   if (nearCountries.some(c => combined.includes(c))) return 0.60;
-
-  // Far away
   const farCountries = ['china', 'india', 'brazil', 'argentina', 'thailand', 'vietnam',
     'indonesia', 'australia', 'new zealand', 'japan', 'south korea'];
   if (farCountries.some(c => combined.includes(c))) return 0.30;
-
   return 0.5;
-}
-
-function encodeManufacturingSustainability(product: OFFRawProduct): number {
-  const tags = product.manufacturing_places_tags || [];
-  const text = product.manufacturing_places || '';
-
-  if (tags.length === 0 && !text) return 0.5;
-
-  // Check tags
-  for (const tag of tags) {
-    const clean = tag.replace('en:', '').replace(/-/g, ' ').toLowerCase();
-    for (const [kw, score] of Object.entries(ORIGIN_SUSTAINABILITY)) {
-      if (clean.includes(kw)) return score;
-    }
-  }
-
-  // Check text
-  const lower = text.toLowerCase();
-  for (const [kw, score] of Object.entries(ORIGIN_SUSTAINABILITY)) {
-    if (lower.includes(kw)) return score;
-  }
-
-  return 0.5;
-}
-
-// ─── Ingredient Analysis (Features 22-27) ────────────────────────
-
-function encodeIsVegan(product: OFFRawProduct): number {
-  // Check labels_tags for vegan certification
-  if (hasExactTag(product.labels_tags, ['en:vegan', 'en:certified-vegan', 'en:vegan-society'])) return 1;
-  // Check ingredients_analysis_tags
-  if (hasTag(product.ingredients_analysis_tags, 'vegan')) {
-    // "en:vegan" = yes, "en:non-vegan" = no
-    if (hasTag(product.ingredients_analysis_tags, 'non-vegan')) return 0;
-    return 1;
-  }
-  return 0;
-}
-
-function encodeIsVegetarian(product: OFFRawProduct): number {
-  if (hasExactTag(product.labels_tags, ['en:vegetarian', 'en:suitable-for-vegetarians'])) return 1;
-  if (hasTag(product.ingredients_analysis_tags, 'vegetarian')) {
-    if (hasTag(product.ingredients_analysis_tags, 'non-vegetarian')) return 0;
-    return 1;
-  }
-  return 0;
-}
-
-function encodeHasPalmOil(product: OFFRawProduct): number {
-  // ingredients_analysis_tags contains "en:palm-oil" or "en:palm-oil-free"
-  if (hasTag(product.ingredients_analysis_tags, 'palm-oil-free')) return 0;
-  if (hasTag(product.ingredients_analysis_tags, 'palm-oil')) return 1;
-  return 0;
-}
-
-function encodeHasHighSugar(product: OFFRawProduct): number {
-  // nutrient_levels_tags: "en:sugars-in-high-quantity"
-  return hasTag(product.nutrient_levels_tags, 'sugars-in-high-quantity') ? 1 : 0;
-}
-
-function encodeHasHighSaturatedFat(product: OFFRawProduct): number {
-  return hasTag(product.nutrient_levels_tags, 'saturated-fat-in-high-quantity') ? 1 : 0;
-}
-
-function encodeHasHighSodium(product: OFFRawProduct): number {
-  return hasTag(product.nutrient_levels_tags, 'salt-in-high-quantity') ? 1 : 0;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -499,8 +429,8 @@ function encodeHasHighSodium(product: OFFRawProduct): number {
 
 // Default values for each feature (used to measure data richness)
 const FEATURE_DEFAULTS: number[] = [
-  // Category (3)
-  0.5, 0.5, 0.5,
+  // Category (1)
+  0.5,
   // Processing (3)
   0.5, 0, 0.5,
   // Packaging (6)
@@ -509,58 +439,142 @@ const FEATURE_DEFAULTS: number[] = [
   0, 0, 0, 0, 0, 0,
   // Origin (4)
   0.5, 0, 0.5, 0.5,
-  // Ingredients (6)
-  0, 0, 0, 0, 0, 0,
+  // Ingredient Analysis (3)
+  0, 0, 0,
+  // Nutrient Levels (5)
+  0, 0, 0, 0, 0,
+  // Food Group Binaries (12)
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
 
 /**
- * Encode a raw Open Food Facts product into a 28-feature vector.
- * This is the main function used by the training pipeline.
+ * Encode a raw Open Food Facts product into a 40-feature vector.
+ * Feature order MUST match encodeProduct() in trainModel.js exactly.
  */
 export function encodeFromOFFProduct(product: OFFRawProduct): FeatureVector {
+  const packTags = combinePackagingText(product);
+  const plasticKw = ['plastic', 'pet', 'hdpe', 'ldpe', 'pp', 'ps', 'pvc', 'polystyrene', 'polyethylene', 'polypropylene', 'film', 'wrap'];
+  const glassKw = ['glass', 'verre', 'jar'];
+  const cardboardKw = ['cardboard', 'paper', 'carton', 'tetra', 'kraft', 'papier'];
+  const metalKw = ['metal', 'aluminum', 'aluminium', 'tin', 'steel', 'can'];
+  const compostKw = ['compostable', 'biodegradable', 'bioplastic'];
+  const allMatKw = ['plastic', 'glass', 'cardboard', 'paper', 'metal', 'aluminum', 'tin', 'wood', 'cork'];
+
+  // Count packaging materials
+  let matCount = 0;
+  for (const mat of allMatKw) {
+    if (packTags.some(t => t.includes(mat))) matCount++;
+  }
+  let packMaterialScore: number;
+  if (packTags.length === 0) packMaterialScore = 0.5;
+  else if (matCount === 0) packMaterialScore = 0.5;
+  else if (matCount === 1) packMaterialScore = 0.8;
+  else packMaterialScore = Math.max(0.2, 1 - (matCount / 5));
+
+  // Certification count
+  const labels = product.labels_tags || [];
+  const labelsLower = labels.map(t => t.toLowerCase());
+  let certCount = 0;
+  for (const certTag of ALL_CERT_TAGS) {
+    if (labelsLower.some(t => t.includes(certTag.replace('en:', '')))) certCount++;
+  }
+
+  // NOVA group
+  const nova = product.nova_group;
+  const novaScore = (nova !== null && nova !== undefined)
+    ? Math.max(0, Math.min(1, 1 - ((nova - 1) / 3))) : 0.5;
+
+  // Ingredients
+  const ingredientsN = product.ingredients_n;
+  const ingredientComplexity = (ingredientsN !== null && ingredientsN !== undefined && ingredientsN > 0)
+    ? Math.max(0, Math.min(1, 1 - (ingredientsN / 50))) : 0.5;
+
+  // Vegan/Vegetarian from ingredients_analysis_tags
+  let isVegan = 0, isVegetarian = 0, hasPalmOil = 0;
+  const ingAnalysis = product.ingredients_analysis_tags || [];
+  if (hasExactTag(labels, ['en:vegan', 'en:certified-vegan', 'en:vegan-society'])) isVegan = 1;
+  else if (hasTag(ingAnalysis, 'vegan') && !hasTag(ingAnalysis, 'non-vegan')) isVegan = 1;
+
+  if (hasExactTag(labels, ['en:vegetarian', 'en:suitable-for-vegetarians'])) isVegetarian = 1;
+  else if (hasTag(ingAnalysis, 'vegetarian') && !hasTag(ingAnalysis, 'non-vegetarian')) isVegetarian = 1;
+
+  if (hasTag(ingAnalysis, 'palm-oil') && !hasTag(ingAnalysis, 'palm-oil-free')) hasPalmOil = 1;
+
+  // Nutrient levels
+  const nutrient = product.nutrient_levels_tags || [];
+  const hasHighSugar = hasTag(nutrient, 'sugars-in-high-quantity') ? 1 : 0;
+  const hasHighSatFat = hasTag(nutrient, 'saturated-fat-in-high-quantity') ? 1 : 0;
+  const hasHighSodium = hasTag(nutrient, 'salt-in-high-quantity') ? 1 : 0;
+
+  // Local origin
+  const originTags = product.origins_tags || [];
+  const originText = (product.origins || '').toLowerCase();
+  const localKw = ['local', 'regional', 'national', 'domestic'];
+  const hasLocal = localKw.some(kw =>
+    originTags.some(t => t.toLowerCase().includes(kw)) || originText.includes(kw)
+  ) ? 1 : 0;
+
+  const cats = product.categories_tags;
+
   const features: number[] = [
-    // Category Analysis (3)
-    encodeCategoryEnvironment(product.categories_tags),         // [0]
-    encodeCategoryProcessing(product.categories_tags),          // [1]
-    encodeCategoryHealth(product.categories_tags),              // [2]
+    // === CATEGORY ANALYSIS (1 feature: data-driven score) ===
+    encodeCategoryScore(cats),                                              // [0]
 
-    // Processing Level (3)
-    encodeNovaGroup(product.nova_group),                        // [3]
-    encodeIsUltraProcessed(product.nova_group),                 // [4]
-    encodeIngredientComplexity(product.ingredients_n),          // [5]
+    // === PROCESSING LEVEL (3) ===
+    novaScore,                                                              // [1]
+    nova === 4 ? 1 : 0,                                                    // [2] isUltraProcessed
+    ingredientComplexity,                                                   // [3]
 
-    // Packaging Features (6)
-    encodeHasPlasticPackaging(product),                         // [6]
-    encodeHasGlassPackaging(product),                           // [7]
-    encodeHasCardboardPackaging(product),                       // [8]
-    encodeHasMetalPackaging(product),                           // [9]
-    encodeHasCompostablePackaging(product),                     // [10]
-    encodePackagingMaterialCount(product),                      // [11]
+    // === PACKAGING (6) ===
+    plasticKw.some(kw => packTags.some(t => t.includes(kw))) ? 1 : 0,      // [4]
+    glassKw.some(kw => packTags.some(t => t.includes(kw))) ? 1 : 0,        // [5]
+    cardboardKw.some(kw => packTags.some(t => t.includes(kw))) ? 1 : 0,    // [6]
+    metalKw.some(kw => packTags.some(t => t.includes(kw))) ? 1 : 0,        // [7]
+    compostKw.some(kw => packTags.some(t => t.includes(kw))) ? 1 : 0,      // [8]
+    packMaterialScore,                                                      // [9]
 
-    // Certifications (6)
-    encodeHasOrganic(product.labels_tags),                      // [12]
-    encodeHasFairTrade(product.labels_tags),                    // [13]
-    encodeHasRainforest(product.labels_tags),                   // [14]
-    encodeHasEUEcolabel(product.labels_tags),                   // [15]
-    encodeHasMSC(product.labels_tags),                          // [16]
-    encodeCertificationTotal(product.labels_tags),              // [17]
+    // === CERTIFICATIONS (6) ===
+    hasExactTag(labels, ORGANIC_TAGS) ? 1 : 0,                             // [10]
+    hasExactTag(labels, FAIRTRADE_TAGS) ? 1 : 0,                           // [11]
+    hasExactTag(labels, RAINFOREST_TAGS) ? 1 : 0,                          // [12]
+    hasExactTag(labels, EU_ECOLABEL_TAGS) ? 1 : 0,                         // [13]
+    hasExactTag(labels, MSC_TAGS) ? 1 : 0,                                 // [14]
+    Math.min(certCount / 5, 1),                                             // [15]
 
-    // Origin & Sustainability (4)
-    encodeOriginSustainability(product),                        // [18]
-    encodeHasLocalOrigin(product),                              // [19]
-    encodeTransportEstimate(product),                           // [20]
-    encodeManufacturingSustainability(product),                 // [21]
+    // === ORIGIN (4) ===
+    encodeOriginFromTagsAndText(product.origins_tags, product.origins, ORIGIN_SUSTAINABILITY), // [16]
+    hasLocal,                                                               // [17]
+    encodeTransportEstimate(product),                                       // [18]
+    encodeOriginFromTagsAndText(product.manufacturing_places_tags, product.manufacturing_places, ORIGIN_SUSTAINABILITY), // [19]
 
-    // Ingredient Analysis (6)
-    encodeIsVegan(product),                                     // [22]
-    encodeIsVegetarian(product),                                // [23]
-    encodeHasPalmOil(product),                                  // [24]
-    encodeHasHighSugar(product),                                // [25]
-    encodeHasHighSaturatedFat(product),                         // [26]
-    encodeHasHighSodium(product),                               // [27]
+    // === INGREDIENT ANALYSIS (3) ===
+    isVegan,                                                                // [20]
+    isVegetarian,                                                           // [21]
+    hasPalmOil,                                                             // [22]
+
+    // === NUTRIENT LEVELS (5) ===
+    hasHighSugar,                                                           // [23]
+    hasHighSatFat,                                                          // [24]
+    hasHighSodium,                                                          // [25]
+    hasTag(nutrient, 'fat-in-high-quantity') ? 1 : 0,                       // [26]
+    hasTag(nutrient, 'fat-in-low-quantity') ? 1 : 0,                        // [27]
+
+    // === FOOD GROUP BINARY FEATURES (12) ===
+    hasFoodGroup(cats, MEAT_TAGS),                                          // [28]
+    hasFoodGroup(cats, FISH_TAGS),                                          // [29]
+    hasFoodGroup(cats, DAIRY_TAGS),                                         // [30]
+    hasFoodGroup(cats, PLANT_BASED_TAGS),                                   // [31]
+    hasFoodGroup(cats, FRUIT_VEG_TAGS),                                     // [32]
+    hasFoodGroup(cats, CEREAL_TAGS),                                        // [33]
+    hasFoodGroup(cats, BEVERAGE_TAGS),                                      // [34]
+    hasFoodGroup(cats, FAT_OIL_TAGS),                                       // [35]
+    hasFoodGroup(cats, SWEET_TAGS),                                         // [36]
+    hasFoodGroup(cats, CANNED_TAGS),                                        // [37]
+    hasFoodGroup(cats, FROZEN_TAGS),                                        // [38]
+    hasFoodGroup(cats, READY_MEAL_TAGS),                                    // [39]
   ];
 
-  // Clamp all features to [0, 1]
+  // Clamp all values to [0, 1]
   for (let i = 0; i < features.length; i++) {
     if (isNaN(features[i])) features[i] = FEATURE_DEFAULTS[i];
     features[i] = Math.max(0, Math.min(1, features[i]));
@@ -581,10 +595,9 @@ export function encodeFromOFFProduct(product: OFFRawProduct): FeatureVector {
 }
 
 /**
- * Encode a locally-created product (user input) into a 28-feature vector.
+ * Encode a locally-created product (user input) into a 40-feature vector.
  */
 export function encodeLocalProduct(product: LocalProduct): FeatureVector {
-  // Build a pseudo-OFF product from local fields
   const labelsTags: string[] = [];
   if (product.certifications) {
     for (const cert of product.certifications) {
