@@ -20,8 +20,10 @@ import {
   StyleSheet,
   Dimensions,
   Platform,
+  Linking,
 } from 'react-native';
 import { CameraView, useCameraPermissions, BarcodeScanningResult } from 'expo-camera';
+import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { useScan } from '@/stores/ScanContext';
 import CornerBrackets from '@/components/CornerBrackets';
@@ -35,7 +37,7 @@ import Animated, {
   FadeInDown,
   Easing,
 } from 'react-native-reanimated';
-import { ScanLine, Camera, Zap, AlertCircle, RefreshCw } from 'lucide-react-native';
+import { ScanLine, Camera, Zap, AlertCircle, RefreshCw, Settings } from 'lucide-react-native';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SCAN_BOX_SIZE = SCREEN_WIDTH * 0.7;
@@ -98,13 +100,15 @@ export default function ScannerScreen() {
 
     console.log(`[Scanner] Barcode scanned: ${data} (type: ${type})`);
 
+    // Haptic feedback on successful scan
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+
     // Animate status change
     statusScale.value = withSpring(1.1, { damping: 8 }, () => {
       statusScale.value = withSpring(1);
     });
 
-    // Route to ParsingScreen for API lookup + scoring
-    // ParsingScreen handles the full flow: OFF lookup → scoring → /impact
+    // Route to ParsingScreen for API lookup + ML prediction + scoring
     setTimeout(() => {
       router.push(`/parsing?barcode=${data}`);
 
@@ -158,6 +162,13 @@ export default function ScannerScreen() {
           </Text>
           <Pressable style={styles.permissionButton} onPress={requestPermission}>
             <Text style={styles.permissionButtonText}>Grant Camera Access</Text>
+          </Pressable>
+          <Pressable
+            style={styles.settingsLink}
+            onPress={() => Linking.openSettings()}
+          >
+            <Settings size={14} color="#64748b" />
+            <Text style={styles.settingsLinkText}>Open Device Settings</Text>
           </Pressable>
           <Pressable style={styles.demoLink} onPress={handleDemoScan}>
             <Text style={styles.demoLinkText}>Try demo mode instead</Text>
@@ -558,5 +569,22 @@ const styles = StyleSheet.create({
     color: '#64748b',
     letterSpacing: 1,
     textDecorationLine: 'underline',
+  },
+  settingsLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(100, 116, 139, 0.3)',
+  },
+  settingsLinkText: {
+    fontFamily: 'SpaceMono-Regular',
+    fontSize: 11,
+    color: '#64748b',
+    letterSpacing: 1,
   },
 });

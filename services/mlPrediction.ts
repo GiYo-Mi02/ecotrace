@@ -5,11 +5,19 @@
 //   2. Rule-Based heuristic — when NN is untrained or features are sparse
 //   3. Category Average — last resort fallback
 //
-// Exports initializeMLModel() for app startup and predictEcoScore() for scoring.
+// Exports:
+//   - initializeMLModel()    — call once at app startup
+//   - predictFromBarcode()   — MAIN ENTRY: barcode → API → ML → result
+//   - predictFromOFF()       — predict from raw OFF product data
+//   - predictFromLocal()     — predict from user-entered product
 
 import { initModel, predict, getModelStatus, loadWeightsFromJSON } from './tensorflowModel';
 import { encodeFromOFFProduct, encodeLocalProduct, NUM_FEATURES } from './featureEncoder';
+import { fetchProductByBarcode, calculateDataQuality } from './openFoodFacts';
+import { mapOFFToProductScan } from './scoring';
 import type { OFFRawProduct, LocalProduct } from './featureEncoder';
+import type { FetchSource } from './openFoodFacts';
+import type { ProductScan } from '@/types/product';
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -263,6 +271,103 @@ export async function initializeMLModel(): Promise<void> {
   })();
 
   return _initPromise;
+}
+
+// ─── MAIN ENTRY POINT: Barcode → API → ML → ProductScan ─────────
+
+export interface BarcodePredictionResult {
+  product: ProductScan;
+  mlPrediction: PredictionResult;
+  source: FetchSource;
+  dataQualityScore: number;
+}
+
+/**
+ * FINAL HANDOFF: Barcode → Open Food Facts → ML Prediction → ProductScan
+ *
+ * This is the main entry point for real-time scanning. It:
+ *   1. Fetches product data from OFF (cache-first, with retry)
+ *   2. Runs the 3-tier ML prediction (NN → rules → category avg)
+ *   3. Builds a complete ProductScan with scoring breakdown
+ *   4. Returns both the ProductScan and raw ML prediction
+ *
+ * Throws if the product is not found (caller should handle navigation
+ * to ProductNotFoundScreen).
+ */
+export async function predictFromBarcode(barcode: string): Promise<BarcodePredictionResult> {
+  // Step 1: Fetch from Open Food Facts (cached or live)
+  const fetchResult = await fetchProductByBarcode(barcode);
+
+  if (!fetchResult.success || !fetchResult.product) {
+    // Product not found — throw so the caller can route to ProductNotFound
+    throw new ProductNotFoundError(
+      fetchResult.error || 'Product not found in database',
+      barcode
+    );
+  }
+
+  const offProduct = fetchResult.product;
+
+  // Step 2: Run ML prediction on the raw OFF product
+  const mlResult = predictFromOFF({
+    code: offProduct.code,
+    product_name: offProduct.product_name,
+    categories_tags: offProduct.categories_tags,
+    nova_group: offProduct.nova_group ?? undefined,
+    labels_tags: offProduct.labels_tags,
+    packaging_tags: offProduct.packaging_tags,
+    packaging_text: offProduct.packaging_text,
+    origins_tags: offProduct.origins?.split(',').map(s => s.trim()),
+    origins: offProduct.origins,
+    manufacturing_places_tags: offProduct.manufacturing_places?.split(',').map(s => s.trim()),
+    manufacturing_places: offProduct.manufacturing_places,
+    ecoscore_score: offProduct.ecoscore_score ?? undefined,
+    ecoscore_grade: offProduct.ecoscore_grade,
+    nutrient_levels_tags: [],
+    ingredients_analysis_tags: [],
+  });
+
+  // Step 3: Build ProductScan using scoring.ts (5-factor scoring for UI)
+  const productScan = mapOFFToProductScan(offProduct, barcode);
+
+  // Step 4: Enhance ProductScan with ML prediction data
+  // Use the ML score if no verified ecoscore exists
+  if (offProduct.ecoscore_score === undefined || offProduct.ecoscore_score === null) {
+    productScan.score = mlResult.score;
+    productScan.status = mlResult.score >= 60 ? 'verified' : mlResult.score >= 30 ? 'pending' : 'flagged';
+  }
+
+  // Add ML method info to scoring breakdown
+  productScan.scoringBreakdown = {
+    ...productScan.scoringBreakdown,
+    ml_score: mlResult.score,
+    ml_method: mlResult.method === 'neural_network' ? 1 : mlResult.method === 'rule_based' ? 2 : 3,
+    ml_features_used: mlResult.featureCount,
+  };
+
+  const dataQuality = fetchResult.quality || calculateDataQuality(offProduct);
+
+  console.log(`[ML] ✅ predictFromBarcode complete: "${offProduct.product_name}" → score ${productScan.score} (${mlResult.method}, ${mlResult.confidence} confidence, ${fetchResult.source})`);
+
+  return {
+    product: productScan,
+    mlPrediction: mlResult,
+    source: fetchResult.source,
+    dataQualityScore: dataQuality.score,
+  };
+}
+
+/**
+ * Custom error for product-not-found, so callers can distinguish
+ * network errors from missing products.
+ */
+export class ProductNotFoundError extends Error {
+  barcode: string;
+  constructor(message: string, barcode: string) {
+    super(message);
+    this.name = 'ProductNotFoundError';
+    this.barcode = barcode;
+  }
 }
 
 // On-device training removed — training is done offline via

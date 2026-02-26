@@ -1,9 +1,10 @@
-// screens/ParsingScreen.tsx — REWRITTEN with real API integration
+// screens/ParsingScreen.tsx — REWRITTEN with real API + ML integration
 // Changes from audit:
 //  - "NEURAL PARSING..." → "ANALYZING..."
 //  - "NEURAL SCANNER v2.4" → "ECOTRACE SCANNER"
-//  - Fake setTimeout → real Open Food Facts API call
+//  - Fake setTimeout → real Open Food Facts API call + ML prediction
 //  - Demo fallback when barcode === 'demo'
+//  - Uses predictFromBarcode() for full ML pipeline
 
 import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, Pressable } from 'react-native';
@@ -18,10 +19,10 @@ import Animated, {
   FadeIn,
 } from 'react-native-reanimated';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import CornerBrackets from '@/components/CornerBrackets';
 import { useScan } from '@/stores/ScanContext';
-import { lookupBarcode } from '@/services/openFoodFacts';
-import { mapOFFToProductScan } from '@/services/scoring';
+import { predictFromBarcode, ProductNotFoundError } from '@/services/mlPrediction';
 import { getRandomProduct } from '@/data/mockData';
 
 // Animated dots for the scanning effect
@@ -131,44 +132,51 @@ export default function ParsingScreen() {
       return;
     }
 
-    // Real barcode lookup via Open Food Facts
+    // Real barcode lookup via Open Food Facts + ML prediction
     try {
       setStatusText('Querying Open Food Facts...');
       await delay(800); // Let animation build up
 
-      const offProduct = await lookupBarcode(barcodeValue);
+      setStatusText('Fetching product data...');
+
+      const result = await predictFromBarcode(barcodeValue);
 
       if (!mountedRef.current) return;
 
-      if (!offProduct) {
-        progressWidth.value = withTiming(100, { duration: 300 });
-        setStatusText('Product not found');
-        await delay(600);
-        if (!mountedRef.current) return;
-        // Route to ProductNotFound screen instead of dead-end error
-        router.replace(`/productNotFound?barcode=${barcodeValue}`);
-        return;
-      }
-
-      setStatusText('Computing sustainability score...');
+      setStatusText(`Running ML prediction (${result.mlPrediction.method.replace('_', ' ')})...`);
       await delay(600);
       if (!mountedRef.current) return;
 
-      const product = mapOFFToProductScan(offProduct, barcodeValue);
+      // Haptic success feedback
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
 
       progressWidth.value = withTiming(100, { duration: 300 });
-      setStatusText('Analysis complete!');
+      setStatusText(`Analysis complete! Score: ${result.product.score}/100`);
+
+      console.log(`[Parsing] ✅ ${result.product.name} → ${result.product.score}/100 (${result.mlPrediction.method}, ${result.source})`);
 
       await delay(500);
       if (!mountedRef.current) return;
 
-      setCurrentProduct(product);
-      addToHistory(product);
+      setCurrentProduct(result.product);
+      addToHistory(result.product);
       router.replace('/impact');
     } catch (e) {
       if (!mountedRef.current) return;
-      setError('Failed to analyze product. Please try again.');
-      setStatusText('Error');
+
+      if (e instanceof ProductNotFoundError) {
+        progressWidth.value = withTiming(100, { duration: 300 });
+        setStatusText('Product not found');
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+        await delay(600);
+        if (!mountedRef.current) return;
+        router.replace(`/productNotFound?barcode=${barcodeValue}`);
+      } else {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+        const errorMsg = e instanceof Error ? e.message : 'Failed to analyze product';
+        setError(errorMsg);
+        setStatusText('Error');
+      }
     }
   };
 
