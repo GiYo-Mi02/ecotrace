@@ -4,14 +4,17 @@
   "version": "1.0.0",
   "scripts": {
     "start": "expo start",
+    "start:offline": "expo start --offline --lan",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
     "test": "jest --watchAll",
     "lint": "expo lint",
+    "fetch-training-data": "node scripts/fetchTrainingData.js",
     "train-model": "node scripts/trainModel.js",
-    "fetch-training-data": "node scripts/fetchTrainingData.js"
+    "evaluate-model": "node scripts/evaluateModel.js",
+    "ml-pipeline": "node scripts/fetchTrainingData.js && node scripts/trainModel.js && node scripts/evaluateModel.js"
   },
   "jest": {
     "preset": "jest-expo"
@@ -22,6 +25,7 @@
     "@react-navigation/bottom-tabs": "^7.2.0",
     "@react-navigation/native": "^7.0.14",
     "@tensorflow/tfjs": "^4.22.0",
+    "@tensorflow/tfjs-backend-wasm": "^4.22.0",
     "expo": "^54.0.25",
     "expo-atlas": "^0.4.0",
     "expo-blur": "~15.0.7",
