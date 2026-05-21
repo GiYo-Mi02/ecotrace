@@ -1,9 +1,8 @@
-// components/EmptyState.tsx — Reusable empty state for screens with no data
-// Audit fix: "No empty states — History pre-loads with mock products"
-
+// components/EmptyState.tsx — MongoDB DS styled empty state
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Scan } from 'lucide-react-native';
+import { colors } from '@/components/ui/theme';
 
 interface EmptyStateProps {
   icon?: React.ReactNode;
@@ -13,16 +12,10 @@ interface EmptyStateProps {
   onAction?: () => void;
 }
 
-export default function EmptyState({
-  icon,
-  title,
-  description,
-  actionLabel,
-  onAction,
-}: EmptyStateProps) {
+export default function EmptyState({ icon, title, description, actionLabel, onAction }: EmptyStateProps) {
   return (
     <View style={styles.container}>
-      {icon || <Scan size={48} color="rgba(255,255,255,0.15)" />}
+      {icon || <Scan size={48} color={colors.stone} />}
       <Text style={styles.title}>{title}</Text>
       <Text style={styles.description}>{description}</Text>
       {actionLabel && onAction && (
@@ -36,39 +29,23 @@ export default function EmptyState({
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 40,
-    paddingTop: 60,
-    gap: 12,
+    flex: 1, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 40, paddingTop: 60, gap: 12,
   },
   title: {
-    fontSize: 16,
-    color: 'rgba(255,255,255,0.6)',
-    fontWeight: '600',
-    textAlign: 'center',
-    marginTop: 8,
+    fontSize: 16, color: colors.slate, fontWeight: '600',
+    textAlign: 'center', marginTop: 8,
   },
   description: {
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.3)',
-    textAlign: 'center',
-    lineHeight: 20,
+    fontSize: 14, color: colors.steel, textAlign: 'center',
+    lineHeight: 21,
   },
   button: {
-    backgroundColor: 'rgba(16,185,129,0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(16,185,129,0.3)',
-    borderRadius: 8,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    marginTop: 8,
+    backgroundColor: colors.brandGreen,
+    borderRadius: 9999,
+    paddingHorizontal: 22, paddingVertical: 10, marginTop: 8,
   },
   buttonText: {
-    fontFamily: 'SpaceMono-Regular',
-    fontSize: 11,
-    color: '#10b981',
-    letterSpacing: 1.5,
+    fontSize: 14, fontWeight: '600', color: colors.onPrimary,
   },
 });

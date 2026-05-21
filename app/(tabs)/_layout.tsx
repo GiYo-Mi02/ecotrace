@@ -1,9 +1,9 @@
 // app/(tabs)/_layout.tsx — Tab Navigator
-// AUDIT FIX: Replaces dead BottomNav component with Expo Router Tabs
-// Styled to match the existing dark theme
+// MongoDB Design System: White nav bar with brand-green active tint
 
 import { Tabs } from 'expo-router';
 import { Scan, Clock, Settings } from 'lucide-react-native';
+import { colors } from '@/components/ui/theme';
 
 export default function TabLayout() {
   return (
@@ -11,18 +11,19 @@ export default function TabLayout() {
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: '#0f172a',
-          borderTopColor: 'rgba(255,255,255,0.1)',
+          backgroundColor: colors.canvas,
+          borderTopColor: colors.hairline,
           borderTopWidth: 1,
           paddingTop: 8,
           paddingBottom: 4,
+          height: 60,
         },
-        tabBarActiveTintColor: '#10b981',
-        tabBarInactiveTintColor: 'rgba(255,255,255,0.4)',
+        tabBarActiveTintColor: colors.brandGreenDark,
+        tabBarInactiveTintColor: colors.steel,
         tabBarLabelStyle: {
-          fontFamily: 'SpaceMono-Regular',
-          fontSize: 10,
-          letterSpacing: 1,
+          fontSize: 11,
+          fontWeight: '600',
+          letterSpacing: 0.5,
         },
       }}
     >

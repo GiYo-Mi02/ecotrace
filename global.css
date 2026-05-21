@@ -1,1 +1,4 @@
-/* ECOTRACE — NativeWind/Tailwind removed. Using React Native StyleSheet. */
+/* ECOTRACE — MongoDB Design System via NativeWind v4 */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

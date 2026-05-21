@@ -436,7 +436,7 @@ const styles = StyleSheet.create({
     marginBottom: 28,
   },
   headerLabel: {
-    fontFamily: 'SpaceMono-Regular',
+    fontFamily: 'SourceCodePro-Regular',
     fontSize: 11,
     color: COLORS.dimText,
     letterSpacing: 3,
@@ -549,10 +549,9 @@ const styles = StyleSheet.create({
   },
   resultsTitle: {
     fontSize: 16,
-    fontWeight: '700',
     color: COLORS.white,
     marginBottom: 16,
-    fontFamily: 'SpaceMono-Regular',
+    fontFamily: 'SourceCodePro-Bold',
     letterSpacing: 1,
   },
   resultSection: {

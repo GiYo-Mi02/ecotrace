@@ -445,5 +445,81 @@ export function quickPredict(barcode: string, categoryKey: string): any {
   };
 }
 
+// ─── Full Prediction for PhotoUploadScreen (manual entry) ────────
+
+export interface ManualProductInput {
+  barcode: string;
+  productName?: string;
+  brand?: string;
+  category?: string;
+  packagingType?: string;
+  certifications?: string[];
+  originCountry?: string;
+  ocrText?: string;
+}
+
+/**
+ * Predict sustainability score from manually-entered product details.
+ * Runs the ML pipeline (predictFromLocal) and wraps into a full ProductScan.
+ */
+export function predictSustainabilityScore(input: ManualProductInput): ProductScan {
+  const mlResult = predictFromLocal({
+    category: input.category,
+    certifications: input.certifications,
+    packagingType: input.packagingType,
+    originCountry: input.originCountry,
+    ocrText: input.ocrText,
+  });
+
+  const score = mlResult.score;
+  const categoryLabel = input.category
+    ? getAvailableCategories().find(c => c.key === input.category)?.label?.replace(/[^\w\s-]/g, '').trim() || input.category
+    : 'Unknown';
+
+  return {
+    id: `SCAN-${Date.now()}`,
+    barcode: input.barcode,
+    name: input.productName || 'Unknown Product',
+    brand: input.brand || 'User Submitted',
+    category: categoryLabel,
+    scanDate: new Date().toISOString().split('T')[0],
+    score,
+    confidence: mlResult.confidence === 'high' ? 'high' : 'estimated',
+    status: score >= 60 ? 'verified' : score >= 30 ? 'pending' : 'flagged',
+    renewablePercent: score >= 60 ? 50 : 30,
+    emissions: 'Data unavailable',
+    transportDistance: input.originCountry || 'Unknown',
+    materials: [{
+      material: input.packagingType || 'Unknown materials',
+      origin: input.originCountry || 'Not disclosed',
+      verified: false,
+      source: 'user_submitted',
+    }],
+    auditSteps: [
+      {
+        id: `audit-${Date.now()}-1`,
+        title: 'Manual Entry',
+        description: 'Product details entered manually by user.',
+        status: 'pending' as const,
+      },
+      {
+        id: `audit-${Date.now()}-2`,
+        title: 'ML Prediction',
+        description: `Score predicted via ${mlResult.method} (${mlResult.confidence} confidence, ${mlResult.featureCount} features used).`,
+        status: mlResult.confidence === 'high' ? 'verified' as const : 'pending' as const,
+        dataSource: 'ECOTRACE ML',
+      },
+    ],
+    auditProgress: 0,
+    scoringBreakdown: {
+      ml_score: mlResult.score,
+      ml_method: mlResult.method === 'neural_network' ? 1 : mlResult.method === 'rule_based' ? 2 : 3,
+      ml_features_used: mlResult.featureCount,
+    },
+    methodologyVersion: 'v4.0-manual',
+    dataSource: 'user_submitted' as const,
+  };
+}
+
 // Re-export model status for UI
 export { getModelStatus } from './tensorflowModel';

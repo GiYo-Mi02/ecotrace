@@ -1,26 +1,8 @@
-// screens/ScannerScreen.tsx — Main Barcode Scanner with ML Integration
-//
-// Features:
-//  - Real camera-based barcode scanning (expo-camera)
-//  - State machine: idle → scanning → fetching → predicting → success/not_found/error
-//  - CornerBrackets animation with ECOTRACE branding
-//  - Dark theme (#0f172a), green accent (#10b981)
-//  - Real Open Food Facts API lookup
-//  - ML eco-score prediction with fallback chain
-//
-// Routes:
-//  - Success → /parsing?barcode={code} (which handles API + scoring + routing to /impact)
-//  - Demo mode for testing
-
+// screens/ScannerScreen.tsx — MongoDB Design System Scanner
+// Deep teal hero band with bright MongoDB green CTA pill
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
-  View,
-  Text,
-  Pressable,
-  StyleSheet,
-  Dimensions,
-  Platform,
-  Linking,
+  View, Text, Pressable, StyleSheet, Dimensions, Platform, Linking,
 } from 'react-native';
 import { CameraView, useCameraPermissions, BarcodeScanningResult } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
@@ -28,563 +10,300 @@ import { useRouter } from 'expo-router';
 import { useScan } from '@/stores/ScanContext';
 import CornerBrackets from '@/components/CornerBrackets';
 import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withRepeat,
-  withTiming,
-  withSpring,
-  FadeIn,
-  FadeInDown,
-  Easing,
+  useSharedValue, useAnimatedStyle,
+  withRepeat, withTiming, withSpring,
+  FadeIn, FadeInDown, Easing,
 } from 'react-native-reanimated';
 import { ScanLine, Camera, Zap, AlertCircle, RefreshCw, Settings } from 'lucide-react-native';
+import { colors } from '@/components/ui/theme';
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const SCAN_BOX_SIZE = SCREEN_WIDTH * 0.7;
-
-// ─── Types ───────────────────────────────────────────────────────
+const { width: SW } = Dimensions.get('window');
+const SCAN_BOX = SW * 0.7;
 
 type ScanState = 'idle' | 'scanning' | 'fetching' | 'predicting' | 'success' | 'not_found' | 'error';
-
-// ─── Component ───────────────────────────────────────────────────
 
 export default function ScannerScreen() {
   const router = useRouter();
   const { setCurrentProduct } = useScan();
-
   const [permission, requestPermission] = useCameraPermissions();
   const [scanState, setScanState] = useState<ScanState>('idle');
   const [scannedBarcode, setScannedBarcode] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string>('');
+  const [errorMessage, setErrorMessage] = useState('');
   const isProcessingRef = useRef(false);
 
-  // Animation values
   const scanLineY = useSharedValue(0);
   const pulseOpacity = useSharedValue(0.6);
   const statusScale = useSharedValue(1);
 
-  // Start scan line animation
   useEffect(() => {
     scanLineY.value = withRepeat(
-      withTiming(SCAN_BOX_SIZE - 4, {
-        duration: 2000,
-        easing: Easing.inOut(Easing.ease),
-      }),
-      -1,
-      true
+      withTiming(SCAN_BOX - 4, { duration: 2000, easing: Easing.inOut(Easing.ease) }),
+      -1, true,
     );
-
     pulseOpacity.value = withRepeat(
       withTiming(1, { duration: 1200, easing: Easing.inOut(Easing.ease) }),
-      -1,
-      true
+      -1, true,
     );
   }, []);
 
-  const scanLineStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: scanLineY.value }],
-  }));
-
-  const pulseStyle = useAnimatedStyle(() => ({
-    opacity: pulseOpacity.value,
-  }));
-
-  // ─── Barcode Handler ────────────────────────────────────────────
+  const scanLineStyle = useAnimatedStyle(() => ({ transform: [{ translateY: scanLineY.value }] }));
+  const pulseStyle = useAnimatedStyle(() => ({ opacity: pulseOpacity.value }));
 
   const handleBarcodeScanned = useCallback(({ data, type }: BarcodeScanningResult) => {
     if (isProcessingRef.current || scanState !== 'scanning') return;
-
     isProcessingRef.current = true;
     setScannedBarcode(data);
     setScanState('fetching');
-
-    console.log(`[Scanner] Barcode scanned: ${data} (type: ${type})`);
-
-    // Haptic feedback on successful scan
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-
-    // Animate status change
-    statusScale.value = withSpring(1.1, { damping: 8 }, () => {
-      statusScale.value = withSpring(1);
-    });
-
-    // Route to ParsingScreen for API lookup + ML prediction + scoring
+    statusScale.value = withSpring(1.1, { damping: 8 }, () => { statusScale.value = withSpring(1); });
     setTimeout(() => {
       router.push(`/parsing?barcode=${data}`);
-
-      // Reset after navigation
-      setTimeout(() => {
-        isProcessingRef.current = false;
-        setScanState('idle');
-        setScannedBarcode(null);
-      }, 1000);
+      setTimeout(() => { isProcessingRef.current = false; setScanState('idle'); setScannedBarcode(null); }, 1000);
     }, 300);
   }, [scanState, router]);
 
-  // ─── Actions ────────────────────────────────────────────────────
+  const startScanning = () => { setScanState('scanning'); setScannedBarcode(null); setErrorMessage(''); isProcessingRef.current = false; };
+  const handleDemoScan = () => { router.push('/parsing?barcode=demo'); };
+  const resetScanner = () => { setScanState('idle'); setScannedBarcode(null); setErrorMessage(''); isProcessingRef.current = false; };
 
-  const startScanning = () => {
-    setScanState('scanning');
-    setScannedBarcode(null);
-    setErrorMessage('');
-    isProcessingRef.current = false;
-  };
-
-  const handleDemoScan = () => {
-    router.push('/parsing?barcode=demo');
-  };
-
-  const resetScanner = () => {
-    setScanState('idle');
-    setScannedBarcode(null);
-    setErrorMessage('');
-    isProcessingRef.current = false;
-  };
-
-  // ─── Permission Request ─────────────────────────────────────────
-
+  // ─── Permission loading ──────────────────────────────────────
   if (!permission) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.permissionText}>Loading camera...</Text>
+      <View style={s.container}>
+        <Text style={s.loadingText}>Loading camera...</Text>
       </View>
     );
   }
 
+  // ─── Permission request ──────────────────────────────────────
   if (!permission.granted) {
     return (
-      <View style={styles.container}>
-        <Animated.View entering={FadeInDown.delay(200)} style={styles.permissionCard}>
-          <Camera size={48} color="#10b981" strokeWidth={1.5} />
-          <Text style={styles.permissionTitle}>Camera Access Required</Text>
-          <Text style={styles.permissionDesc}>
+      <View style={s.container}>
+        <Animated.View entering={FadeInDown.delay(200)} style={s.permissionCard}>
+          <Camera size={48} color={colors.brandGreen} strokeWidth={1.5} />
+          <Text style={s.permTitle}>Camera Access Required</Text>
+          <Text style={s.permDesc}>
             ECOTRACE needs camera access to scan product barcodes and analyze their sustainability impact.
           </Text>
-          <Pressable style={styles.permissionButton} onPress={requestPermission}>
-            <Text style={styles.permissionButtonText}>Grant Camera Access</Text>
+          <Pressable style={s.permButton} onPress={requestPermission}>
+            <Text style={s.permButtonText}>Grant Camera Access</Text>
           </Pressable>
-          <Pressable
-            style={styles.settingsLink}
-            onPress={() => Linking.openSettings()}
-          >
-            <Settings size={14} color="#64748b" />
-            <Text style={styles.settingsLinkText}>Open Device Settings</Text>
+          <Pressable style={s.settingsLink} onPress={() => Linking.openSettings()}>
+            <Settings size={14} color={colors.steel} />
+            <Text style={s.settingsLinkText}>Open Device Settings</Text>
           </Pressable>
-          <Pressable style={styles.demoLink} onPress={handleDemoScan}>
-            <Text style={styles.demoLinkText}>Try demo mode instead</Text>
+          <Pressable style={s.demoLink} onPress={handleDemoScan}>
+            <Text style={s.demoLinkText}>Try demo mode instead</Text>
           </Pressable>
         </Animated.View>
       </View>
     );
   }
 
-  // ─── Main Scanner View ──────────────────────────────────────────
-
+  // ─── Main Scanner ────────────────────────────────────────────
   return (
-    <View style={styles.container}>
-      {/* Camera */}
-      {(scanState === 'scanning' || scanState === 'fetching') ? (
+    <View style={s.container}>
+      {(scanState === 'scanning' || scanState === 'fetching') && (
         <CameraView
           style={StyleSheet.absoluteFill}
           facing="back"
-          barcodeScannerSettings={{
-            barcodeTypes: ['ean13', 'ean8', 'upc_a', 'upc_e', 'qr', 'code128', 'code39'],
-          }}
+          barcodeScannerSettings={{ barcodeTypes: ['ean13', 'ean8', 'upc_a', 'upc_e', 'qr', 'code128', 'code39'] }}
           onBarcodeScanned={scanState === 'scanning' ? handleBarcodeScanned : undefined}
         />
-      ) : null}
+      )}
 
-      {/* Dark overlay with scan window cutout */}
-      <View style={styles.overlay}>
+      <View style={s.overlay}>
         {/* Top bar */}
-        <Animated.View entering={FadeIn.delay(100)} style={styles.topBar}>
-          <Text style={styles.logoText}>ECOTRACE</Text>
-          <Animated.Text style={[styles.statusTag, pulseStyle]}>
-            {scanState === 'idle' && 'READY'}
-            {scanState === 'scanning' && 'SCANNING'}
-            {scanState === 'fetching' && 'FETCHING DATA'}
-            {scanState === 'predicting' && 'ANALYZING'}
-            {scanState === 'success' && 'COMPLETE'}
-            {scanState === 'not_found' && 'NOT FOUND'}
-            {scanState === 'error' && 'ERROR'}
-          </Animated.Text>
+        <Animated.View entering={FadeIn.delay(100)} style={s.topBar}>
+          <Text style={s.logoText}>ECOTRACE</Text>
+          <Animated.View style={[s.statusTag, pulseStyle]}>
+            <Text style={s.statusTagText}>
+              {scanState === 'idle' && 'READY'}
+              {scanState === 'scanning' && 'SCANNING'}
+              {scanState === 'fetching' && 'FETCHING DATA'}
+              {scanState === 'predicting' && 'ANALYZING'}
+              {scanState === 'success' && 'COMPLETE'}
+              {scanState === 'not_found' && 'NOT FOUND'}
+              {scanState === 'error' && 'ERROR'}
+            </Text>
+          </Animated.View>
         </Animated.View>
 
-        {/* Scan box area */}
-        <View style={styles.scanBoxContainer}>
-          <View style={styles.scanBox}>
+        {/* Scan box */}
+        <View style={s.scanBoxContainer}>
+          <View style={s.scanBox}>
             <CornerBrackets
               size={28}
-              color={scanState === 'scanning' ? '#10b981' : scanState === 'error' ? '#ef4444' : '#64748b'}
+              color={scanState === 'scanning' ? colors.brandGreen : scanState === 'error' ? '#EF4444' : colors.steel}
               pulseSpeed={scanState === 'scanning' ? 1200 : 2500}
             />
-
-            {/* Scan line */}
-            {scanState === 'scanning' && (
-              <Animated.View style={[styles.scanLine, scanLineStyle]} />
-            )}
-
-            {/* Center icon */}
+            {scanState === 'scanning' && <Animated.View style={[s.scanLine, scanLineStyle]} />}
             {scanState === 'idle' && (
-              <Animated.View entering={FadeIn} style={styles.centerContent}>
+              <Animated.View entering={FadeIn} style={s.centerContent}>
                 <ScanLine size={32} color="rgba(255,255,255,0.3)" strokeWidth={1.5} />
-                <Text style={styles.scanHint}>Tap to scan</Text>
+                <Text style={s.scanHint}>Tap to scan</Text>
               </Animated.View>
             )}
-
             {scanState === 'fetching' && (
-              <Animated.View entering={FadeIn} style={styles.centerContent}>
-                <Zap size={32} color="#10b981" strokeWidth={1.5} />
-                <Text style={styles.scanHint}>Analyzing...</Text>
+              <Animated.View entering={FadeIn} style={s.centerContent}>
+                <Zap size={32} color={colors.brandGreen} strokeWidth={1.5} />
+                <Text style={s.scanHint}>Analyzing...</Text>
               </Animated.View>
             )}
-
-            {/* Scanned barcode number */}
             {scannedBarcode && (
-              <Animated.View entering={FadeInDown} style={styles.barcodeDisplay}>
-                <Text style={styles.barcodeText}>{scannedBarcode}</Text>
+              <Animated.View entering={FadeInDown} style={s.barcodeDisplay}>
+                <Text style={s.barcodeText}>{scannedBarcode}</Text>
               </Animated.View>
             )}
           </View>
         </View>
 
         {/* Bottom controls */}
-        <View style={styles.bottomBar}>
+        <View style={s.bottomBar}>
           {scanState === 'idle' && (
-            <Animated.View entering={FadeInDown.delay(300)} style={styles.controls}>
-              <Pressable style={styles.scanButton} onPress={startScanning}>
-                <View style={styles.scanButtonInner}>
-                  <Camera size={24} color="#ffffff" strokeWidth={2} />
+            <Animated.View entering={FadeInDown.delay(300)} style={s.controls}>
+              <Pressable style={s.scanButton} onPress={startScanning}>
+                <View style={s.scanButtonInner}>
+                  <Camera size={24} color={colors.onPrimary} strokeWidth={2} />
                 </View>
-                <Text style={styles.scanButtonLabel}>SCAN BARCODE</Text>
+                <Text style={s.scanButtonLabel}>SCAN BARCODE</Text>
               </Pressable>
-
-              <Pressable style={styles.demoButton} onPress={handleDemoScan}>
-                <Text style={styles.demoButtonText}>Demo Mode</Text>
+              <Pressable style={s.demoButton} onPress={handleDemoScan}>
+                <Text style={s.demoButtonText}>Demo Mode</Text>
               </Pressable>
             </Animated.View>
           )}
-
           {scanState === 'scanning' && (
-            <Animated.View entering={FadeIn} style={styles.controls}>
-              <Text style={styles.instructionText}>
-                Point camera at a product barcode
-              </Text>
-              <Pressable style={styles.cancelButton} onPress={resetScanner}>
-                <Text style={styles.cancelButtonText}>Cancel</Text>
+            <Animated.View entering={FadeIn} style={s.controls}>
+              <Text style={s.instructionText}>Point camera at a product barcode</Text>
+              <Pressable style={s.cancelButton} onPress={resetScanner}>
+                <Text style={s.cancelButtonText}>Cancel</Text>
               </Pressable>
             </Animated.View>
           )}
-
           {(scanState === 'error' || scanState === 'not_found') && (
-            <Animated.View entering={FadeInDown} style={styles.controls}>
-              <View style={styles.errorCard}>
-                <AlertCircle size={24} color="#ef4444" />
-                <Text style={styles.errorText}>
-                  {scanState === 'not_found'
-                    ? 'Product not found in database'
-                    : errorMessage || 'Something went wrong'}
+            <Animated.View entering={FadeInDown} style={s.controls}>
+              <View style={s.errorCard}>
+                <AlertCircle size={24} color="#EF4444" />
+                <Text style={s.errorText}>
+                  {scanState === 'not_found' ? 'Product not found in database' : errorMessage || 'Something went wrong'}
                 </Text>
               </View>
-              <Pressable style={styles.retryButton} onPress={resetScanner}>
-                <RefreshCw size={18} color="#ffffff" />
-                <Text style={styles.retryButtonText}>Try Again</Text>
+              <Pressable style={s.retryButton} onPress={resetScanner}>
+                <RefreshCw size={18} color={colors.onPrimary} />
+                <Text style={s.retryButtonText}>Try Again</Text>
               </Pressable>
             </Animated.View>
           )}
-
-          {/* Version tag */}
-          <Text style={styles.versionTag}>
-            ECOTRACE SCANNER v2.0 • ML-POWERED
-          </Text>
+          <Text style={s.versionTag}>ECOTRACE SCANNER v2.0 • ML-POWERED</Text>
         </View>
       </View>
     </View>
   );
 }
 
-// ─── Styles ──────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0f172a',
-  },
-  overlay: {
-    flex: 1,
-    justifyContent: 'space-between',
-  },
+const s = StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.brandTealDeep },
+  overlay: { flex: 1, justifyContent: 'space-between' },
+  loadingText: { fontSize: 14, color: colors.onDarkMuted, textAlign: 'center', flex: 1, textAlignVertical: 'center' },
 
   // Top bar
   topBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: Platform.OS === 'ios' ? 60 : 40,
-    paddingHorizontal: 24,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingTop: Platform.OS === 'ios' ? 60 : 40, paddingHorizontal: 24,
   },
-  logoText: {
-    fontFamily: 'SpaceMono-Regular',
-    fontSize: 18,
-    color: '#10b981',
-    letterSpacing: 3,
-  },
+  logoText: { fontSize: 18, fontWeight: '600', color: colors.brandGreen, letterSpacing: 3 },
   statusTag: {
-    fontFamily: 'SpaceMono-Regular',
-    fontSize: 11,
-    color: '#10b981',
-    letterSpacing: 2,
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.2)',
-    overflow: 'hidden',
+    backgroundColor: 'rgba(0,237,100,0.1)',
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: 9999,
+    borderWidth: 1, borderColor: 'rgba(0,237,100,0.2)',
   },
+  statusTagText: { fontSize: 11, fontWeight: '600', color: colors.brandGreen, letterSpacing: 2 },
 
   // Scan box
-  scanBoxContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  scanBox: {
-    width: SCAN_BOX_SIZE,
-    height: SCAN_BOX_SIZE,
-    position: 'relative',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  scanBoxContainer: { alignItems: 'center', justifyContent: 'center' },
+  scanBox: { width: SCAN_BOX, height: SCAN_BOX, position: 'relative', alignItems: 'center', justifyContent: 'center' },
   scanLine: {
-    position: 'absolute',
-    left: 10,
-    right: 10,
-    height: 2,
-    backgroundColor: '#10b981',
-    shadowColor: '#10b981',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 8,
-    top: 0,
+    position: 'absolute', left: 10, right: 10, height: 2,
+    backgroundColor: colors.brandGreen,
+    shadowColor: colors.brandGreen, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.8, shadowRadius: 8, top: 0,
   },
-  centerContent: {
-    alignItems: 'center',
-    gap: 12,
-  },
-  scanHint: {
-    fontFamily: 'SpaceMono-Regular',
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.4)',
-    letterSpacing: 2,
-    textTransform: 'uppercase',
-  },
+  centerContent: { alignItems: 'center', gap: 12 },
+  scanHint: { fontSize: 12, fontWeight: '600', color: colors.onDarkMuted, letterSpacing: 2, textTransform: 'uppercase' },
   barcodeDisplay: {
-    position: 'absolute',
-    bottom: -30,
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.3)',
+    position: 'absolute', bottom: -30,
+    backgroundColor: 'rgba(0,237,100,0.12)', paddingHorizontal: 16, paddingVertical: 6,
+    borderRadius: 9999, borderWidth: 1, borderColor: 'rgba(0,237,100,0.25)',
   },
-  barcodeText: {
-    fontFamily: 'SpaceMono-Regular',
-    fontSize: 14,
-    color: '#10b981',
-    letterSpacing: 2,
-  },
+  barcodeText: { fontFamily: 'SourceCodePro-Regular', fontSize: 14, color: colors.brandGreen, letterSpacing: 2 },
 
   // Bottom bar
-  bottomBar: {
-    alignItems: 'center',
-    paddingBottom: Platform.OS === 'ios' ? 40 : 24,
-    paddingHorizontal: 24,
-  },
-  controls: {
-    alignItems: 'center',
-    width: '100%',
-    gap: 16,
-  },
+  bottomBar: { alignItems: 'center', paddingBottom: Platform.OS === 'ios' ? 40 : 24, paddingHorizontal: 24 },
+  controls: { alignItems: 'center', width: '100%', gap: 16 },
 
-  // Scan button
-  scanButton: {
-    alignItems: 'center',
-    gap: 12,
-  },
+  // Scan button — MongoDB green pill
+  scanButton: { alignItems: 'center', gap: 12 },
   scanButtonInner: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    borderWidth: 3,
-    borderColor: '#10b981',
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: 72, height: 72, borderRadius: 36,
+    backgroundColor: colors.brandGreen,
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: colors.brandGreen, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 12,
   },
-  scanButtonLabel: {
-    fontFamily: 'SpaceMono-Regular',
-    fontSize: 12,
-    color: '#10b981',
-    letterSpacing: 3,
-  },
+  scanButtonLabel: { fontSize: 12, fontWeight: '600', color: colors.brandGreen, letterSpacing: 3 },
 
-  // Demo button
+  // Demo button — outlined pill on dark
   demoButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(100, 116, 139, 0.3)',
+    paddingHorizontal: 22, paddingVertical: 10,
+    borderRadius: 9999, borderWidth: 1, borderColor: colors.hairlineDark,
   },
-  demoButtonText: {
-    fontFamily: 'SpaceMono-Regular',
-    fontSize: 11,
-    color: '#64748b',
-    letterSpacing: 1,
-  },
+  demoButtonText: { fontSize: 14, fontWeight: '600', color: colors.onDarkMuted },
 
-  // Instructions
-  instructionText: {
-    fontFamily: 'SpaceMono-Regular',
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.5)',
-    textAlign: 'center',
-    letterSpacing: 1,
-  },
+  // Instruction
+  instructionText: { fontSize: 14, color: colors.onDarkMuted, textAlign: 'center' },
 
-  // Cancel
+  // Cancel — outlined pill
   cancelButton: {
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.3)',
+    paddingHorizontal: 24, paddingVertical: 10,
+    borderRadius: 9999, borderWidth: 1, borderColor: 'rgba(239,68,68,0.3)',
   },
-  cancelButtonText: {
-    fontFamily: 'SpaceMono-Regular',
-    fontSize: 12,
-    color: '#ef4444',
-    letterSpacing: 1,
-  },
+  cancelButtonText: { fontSize: 14, fontWeight: '600', color: '#EF4444' },
 
   // Error
   errorCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.2)',
-    width: '100%',
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: 'rgba(239,68,68,0.08)', paddingHorizontal: 20, paddingVertical: 14,
+    borderRadius: 12, borderWidth: 1, borderColor: 'rgba(239,68,68,0.15)', width: '100%',
   },
-  errorText: {
-    flex: 1,
-    fontFamily: 'SpaceMono-Regular',
-    fontSize: 12,
-    color: '#fca5a5',
-    lineHeight: 18,
-  },
+  errorText: { flex: 1, fontSize: 14, color: '#FCA5A5', lineHeight: 20 },
 
-  // Retry
+  // Retry — brand green pill
   retryButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    borderWidth: 1,
-    borderColor: '#10b981',
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 24, paddingVertical: 12,
+    borderRadius: 9999, backgroundColor: colors.brandGreen,
   },
-  retryButtonText: {
-    fontFamily: 'SpaceMono-Regular',
-    fontSize: 12,
-    color: '#10b981',
-    letterSpacing: 1,
-  },
+  retryButtonText: { fontSize: 14, fontWeight: '600', color: colors.onPrimary },
 
   // Version
-  versionTag: {
-    fontFamily: 'SpaceMono-Regular',
-    fontSize: 9,
-    color: 'rgba(100, 116, 139, 0.5)',
-    letterSpacing: 1,
-    marginTop: 20,
-  },
+  versionTag: { fontSize: 10, color: 'rgba(255,255,255,0.3)', marginTop: 20 },
 
   // Permission
-  permissionText: {
-    fontFamily: 'SpaceMono-Regular',
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.5)',
-    textAlign: 'center',
-    flex: 1,
-    textAlignVertical: 'center',
+  permissionCard: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40, gap: 20 },
+  permTitle: { fontSize: 22, fontWeight: '500', color: colors.onDark, textAlign: 'center', letterSpacing: -0.5 },
+  permDesc: { fontSize: 16, color: colors.onDarkMuted, textAlign: 'center', lineHeight: 25 },
+  permButton: {
+    backgroundColor: colors.brandGreen,
+    paddingHorizontal: 32, paddingVertical: 14,
+    borderRadius: 9999, marginTop: 8,
   },
-  permissionCard: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 40,
-    gap: 20,
-  },
-  permissionTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#ffffff',
-    textAlign: 'center',
-  },
-  permissionDesc: {
-    fontFamily: 'SpaceMono-Regular',
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.5)',
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  permissionButton: {
-    backgroundColor: '#10b981',
-    paddingHorizontal: 32,
-    paddingVertical: 14,
-    borderRadius: 12,
-    marginTop: 8,
-  },
-  permissionButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#ffffff',
-    letterSpacing: 1,
-  },
-  demoLink: {
-    marginTop: 8,
-    paddingVertical: 8,
-  },
-  demoLinkText: {
-    fontFamily: 'SpaceMono-Regular',
-    fontSize: 11,
-    color: '#64748b',
-    letterSpacing: 1,
-    textDecorationLine: 'underline',
-  },
+  permButtonText: { fontSize: 14, fontWeight: '600', color: colors.onPrimary },
+  demoLink: { marginTop: 8, paddingVertical: 8 },
+  demoLinkText: { fontSize: 14, color: colors.brandGreenDark, fontWeight: '500', textDecorationLine: 'underline' },
   settingsLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 12,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(100, 116, 139, 0.3)',
+    flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 12,
+    paddingVertical: 8, paddingHorizontal: 16,
+    borderRadius: 9999, borderWidth: 1, borderColor: colors.hairlineDark,
   },
-  settingsLinkText: {
-    fontFamily: 'SpaceMono-Regular',
-    fontSize: 11,
-    color: '#64748b',
-    letterSpacing: 1,
-  },
+  settingsLinkText: { fontSize: 14, fontWeight: '500', color: colors.onDarkMuted },
 });

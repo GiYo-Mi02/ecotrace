@@ -2,11 +2,9 @@ import React, { useEffect } from 'react';
 import { View, Text } from 'react-native';
 import { CheckCircle, AlertTriangle, Clock } from 'lucide-react-native';
 import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withRepeat,
-  withTiming,
+  useSharedValue, useAnimatedStyle, withRepeat, withTiming,
 } from 'react-native-reanimated';
+import { colors } from '@/components/ui/theme';
 
 interface StatusBadgeProps {
   status: 'verified' | 'flagged' | 'pending';
@@ -17,23 +15,23 @@ interface StatusBadgeProps {
 const STATUS_CONFIG = {
   verified: {
     label: 'VERIFIED',
-    color: '#10b981',
-    bgColor: 'rgba(16,185,129,0.15)',
-    borderColor: 'rgba(16,185,129,0.3)',
+    color: colors.brandGreenDark,
+    bgColor: colors.brandGreenSoft,
+    borderColor: '#B8E8D5',
     Icon: CheckCircle,
   },
   flagged: {
     label: 'HIGH RISK',
-    color: '#f43f5e',
-    bgColor: 'rgba(244,63,94,0.15)',
-    borderColor: 'rgba(244,63,94,0.3)',
+    color: '#B91C1C',
+    bgColor: '#FEE2E2',
+    borderColor: '#FECACA',
     Icon: AlertTriangle,
   },
   pending: {
     label: 'PENDING',
-    color: '#3b82f6',
-    bgColor: 'rgba(59,130,246,0.15)',
-    borderColor: 'rgba(59,130,246,0.3)',
+    color: colors.accentBlue,
+    bgColor: '#EBF5FF',
+    borderColor: '#BFDBFE',
     Icon: Clock,
   },
 };
@@ -55,37 +53,26 @@ export default function StatusBadge({ status, size = 'md', pulse = false }: Stat
     }
   }, [pulse, status]);
 
-  const animatedStyle = useAnimatedStyle(() => ({
-    opacity: opacity.value,
-  }));
+  const animatedStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
 
   return (
     <Animated.View
       style={[
         animatedStyle,
         {
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 4,
+          flexDirection: 'row', alignItems: 'center', gap: 4,
           backgroundColor: config.bgColor,
-          borderWidth: 1,
-          borderColor: config.borderColor,
-          borderRadius: 6,
-          paddingHorizontal: sizeConfig.px,
-          paddingVertical: sizeConfig.py,
+          borderWidth: 1, borderColor: config.borderColor,
+          borderRadius: 9999,
+          paddingHorizontal: sizeConfig.px, paddingVertical: sizeConfig.py,
         },
       ]}
     >
       <config.Icon size={sizeConfig.iconSize} color={config.color} />
-      <Text
-        style={{
-          fontFamily: 'SpaceMono-Regular',
-          fontSize: sizeConfig.fontSize,
-          color: config.color,
-          fontWeight: '600',
-          letterSpacing: 1,
-        }}
-      >
+      <Text style={{
+        fontSize: sizeConfig.fontSize, color: config.color,
+        fontWeight: '600', letterSpacing: 0.5,
+      }}>
         {config.label}
       </Text>
     </Animated.View>

@@ -69,7 +69,7 @@ export default function ScoreRing({
         <View style={{ position: 'absolute', alignItems: 'center' }}>
           <Text
             style={{
-              fontFamily: 'SpaceMono-Regular',
+              fontFamily: 'SourceCodePro-Bold',
               fontSize: size * 0.3,
               fontWeight: '800',
               color: '#ffffff',
@@ -79,7 +79,7 @@ export default function ScoreRing({
           </Text>
           <Text
             style={{
-              fontFamily: 'SpaceMono-Regular',
+              fontFamily: 'SourceCodePro-Regular',
               fontSize: size * 0.08,
               color: 'rgba(255,255,255,0.6)',
               textTransform: 'uppercase',
