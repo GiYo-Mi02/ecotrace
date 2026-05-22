@@ -10,6 +10,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { ScanProvider } from '@/stores/ScanContext';
+import { HealthProvider } from '@/stores/HealthContext';
 import { initializeMLModel } from '@/services/mlPrediction';
 
 // MongoDB DS Typography — Google Fonts equivalents
@@ -63,26 +64,29 @@ export default function RootLayout() {
 
   return (
     <ErrorBoundary>
-      <ScanProvider>
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: '#001E2B' },
-            animation: 'slide_from_right',
-          }}
-        >
-          <Stack.Screen name="index" />
-          <Stack.Screen name="(tabs)" options={{ animation: 'none' }} />
-          <Stack.Screen name="parsing" options={{ animation: 'fade', gestureEnabled: false }} />
-          <Stack.Screen name="impact" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="audit" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="productNotFound" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="photoUpload" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="onboarding" options={{ animation: 'fade', gestureEnabled: false }} />
-          <Stack.Screen name="methodology" options={{ animation: 'slide_from_bottom' }} />
-        </Stack>
-        <StatusBar style="light" />
-      </ScanProvider>
+      <HealthProvider>
+        <ScanProvider>
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: '#001E2B' },
+              animation: 'slide_from_right',
+            }}
+          >
+            <Stack.Screen name="index" />
+            <Stack.Screen name="(tabs)" options={{ animation: 'none' }} />
+            <Stack.Screen name="parsing" options={{ animation: 'fade', gestureEnabled: false }} />
+            <Stack.Screen name="impact" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="audit" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="productNotFound" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="photoUpload" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="onboarding" options={{ animation: 'fade', gestureEnabled: false }} />
+            <Stack.Screen name="health-profile" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="methodology" options={{ animation: 'slide_from_bottom' }} />
+          </Stack>
+          <StatusBar style="light" />
+        </ScanProvider>
+      </HealthProvider>
     </ErrorBoundary>
   );
 }

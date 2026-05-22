@@ -25,6 +25,35 @@ export type ConfidenceLevel = 'high' | 'estimated' | 'insufficient';
 
 export type ProductStatus = 'verified' | 'flagged' | 'pending';
 
+export interface NutrientFact {
+  key: string;
+  label: string;
+  amount: number;
+  unit: string;
+  per: '100g';
+}
+
+export interface HealthAnalysis {
+  /** True if no allergen hits and no nutritional warnings */
+  isMatchForUser: boolean;
+  /** Allergens from user's list found in the product */
+  flaggedIngredients: string[];
+  /** Human-readable warning about processing level or nutriscore */
+  nutritionalWarning?: string;
+  /** Positive dietary matches (e.g. ['Vegan', 'Gluten-Free']) */
+  matchedDiets?: string[];
+  /** Short reasons for the banner (chips or bullets) */
+  reasons?: string[];
+  /** Brief, non-medical guidance for frequent intake */
+  guidance?: string;
+  /** Nutrient facts (per 100g) when available */
+  nutrientFacts?: NutrientFact[];
+  /** nova_group value (1–4), 0 if unknown */
+  processingLevel: number;
+  /** nutriscore_grade uppercased, undefined if unknown */
+  nutriScore?: string;
+}
+
 export interface ProductScan {
   id: string;
   barcode?: string;
@@ -44,6 +73,7 @@ export interface ProductScan {
   auditProgress: number;
   scoringBreakdown?: Record<string, number>;
   methodologyVersion: string;
+  healthAnalysis?: HealthAnalysis;
   dataSource: 'openfoodfacts' | 'mock' | 'user_submitted';
 }
 

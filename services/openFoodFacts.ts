@@ -45,6 +45,12 @@ export interface OFFProduct {
   image_front_url?: string;
   image_front_small_url?: string;
   ingredients_text?: string;
+  allergens_tags?: string[];
+  ingredients_analysis_tags?: string[];
+  nutrient_levels_tags?: string[];
+  nutriments?: Record<string, number | string | null | undefined>;
+  serving_size?: string;
+  serving_quantity?: number;
   quantity?: string;
   stores?: string;
   countries_tags?: string[];
@@ -103,7 +109,7 @@ async function cacheProduct(barcode: string, product: OFFProduct): Promise<void>
 // ─── Fetch with Retry ────────────────────────────────────────────
 
 async function fetchWithRetry(barcode: string): Promise<OFFProduct | null> {
-  const url = `${BASE_URL}/api/v2/product/${barcode}.json?fields=code,product_name,brands,categories,categories_tags,ecoscore_grade,ecoscore_score,nova_group,nutriscore_grade,labels,labels_tags,packaging_text,packaging_tags,origins,manufacturing_places,image_url,image_front_url,image_front_small_url,ingredients_text,quantity,stores,countries_tags`;
+  const url = `${BASE_URL}/api/v2/product/${barcode}.json?fields=code,product_name,brands,categories,categories_tags,ecoscore_grade,ecoscore_score,nova_group,nutriscore_grade,labels,labels_tags,packaging_text,packaging_tags,origins,manufacturing_places,image_url,image_front_url,image_front_small_url,ingredients_text,allergens_tags,ingredients_analysis_tags,nutrient_levels_tags,nutriments,serving_size,serving_quantity,quantity,stores,countries_tags`;
 
   let lastError: Error | null = null;
 
@@ -153,6 +159,12 @@ async function fetchWithRetry(barcode: string): Promise<OFFProduct | null> {
         image_front_url: data.product.image_front_url,
         image_front_small_url: data.product.image_front_small_url,
         ingredients_text: data.product.ingredients_text,
+        allergens_tags: data.product.allergens_tags,
+        ingredients_analysis_tags: data.product.ingredients_analysis_tags,
+        nutrient_levels_tags: data.product.nutrient_levels_tags,
+        nutriments: data.product.nutriments,
+        serving_size: data.product.serving_size,
+        serving_quantity: data.product.serving_quantity,
         quantity: data.product.quantity,
         stores: data.product.stores,
         countries_tags: data.product.countries_tags,

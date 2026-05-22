@@ -140,13 +140,13 @@ export default function ParsingScreen() {
         <Animated.View style={[progressStyle, s.progressFill]} />
       </View>
       <View style={s.checklist}>
-        {['Product Identification', 'Environmental Data', 'Sustainability Score'].map((item, i) => (
+        {['Product Identification', 'Environmental Data', 'Sustainability Score', 'Personal Health Check'].map((item, i) => (
           <Animated.View key={item} entering={FadeIn.delay(i * 800).duration(400)} style={s.checkItem}>
             <View style={[s.checkDot, {
-              backgroundColor: i === 0 ? colors.brandGreen : i === 1 ? colors.accentBlue : colors.stone,
+              backgroundColor: i === 0 ? '#10b981' : i === 1 ? '#3b82f6' : i === 2 ? '#f59e0b' : 'rgba(255,255,255,0.3)',
             }]} />
             <Text style={[s.checkText, {
-              color: i === 0 ? colors.brandGreen : i === 1 ? colors.accentBlue : colors.stone,
+              color: i === 0 ? '#10b981' : i === 1 ? '#3b82f6' : i === 2 ? '#f59e0b' : 'rgba(255,255,255,0.3)',
             }]}>
               {i === 0 ? '✓ ' : i === 1 ? '◎ ' : '○ '}{item}
             </Text>

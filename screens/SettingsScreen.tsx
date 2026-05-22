@@ -3,21 +3,23 @@
 
 import React from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet, Alert, Linking } from 'react-native';
-import { Info, BookOpen, Trash2, Shield, ChevronRight, ExternalLink, Mail } from 'lucide-react-native';
+import { Info, BookOpen, Trash2, Shield, ChevronRight, ExternalLink, Mail, Heart } from 'lucide-react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
 import DemoBanner from '@/components/DemoBanner';
 import { useScan } from '@/stores/ScanContext';
 import { colors } from '@/components/ui/theme';
 
-function SettingsItem({ icon: Icon, label, description, onPress, danger = false }: {
-  icon: any; label: string; description?: string; onPress: () => void; danger?: boolean;
+function SettingsItem({ icon: Icon, label, description, onPress, danger = false, color }: {
+  icon: any; label: string; description?: string; onPress: () => void; danger?: boolean; color?: string;
 }) {
+  const accentColor = danger ? '#DC2626' : (color ?? colors.slate);
+  const labelColor = danger ? '#DC2626' : color;
   return (
     <Pressable onPress={onPress} style={s.settingsItem}>
-      <Icon size={18} color={danger ? '#DC2626' : colors.slate} />
+      <Icon size={18} color={accentColor} />
       <View style={{ flex: 1 }}>
-        <Text style={[s.itemLabel, danger && { color: '#DC2626' }]}>{label}</Text>
+        <Text style={[s.itemLabel, labelColor && { color: labelColor }]}>{label}</Text>
         {description && <Text style={s.itemDescription}>{description}</Text>}
       </View>
       <ChevronRight size={16} color={colors.hairlineStrong} />
@@ -67,6 +69,17 @@ export default function SettingsScreen() {
               onPress={() => router.push('/methodology')} />
             <SettingsItem icon={Shield} label="Privacy & Data" description="How your data is handled"
               onPress={() => Alert.alert('Privacy', 'ECOTRACE stores your scan history locally on your device. No personal data is sent to any server. Product data is fetched from the Open Food Facts public API.\n\nFull privacy policy coming soon.', [{ text: 'OK' }])} />
+          </View>
+
+          <View style={s.section}>
+            <Text style={s.sectionTitle}>HEALTH</Text>
+            <SettingsItem
+              icon={Heart}
+              label="Health Profile"
+              description="Dietary preferences, allergens & health goals"
+              onPress={() => router.push('/health-profile' as any)}
+              color="#f43f5e"
+            />
           </View>
 
           {/* Data */}

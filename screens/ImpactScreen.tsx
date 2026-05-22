@@ -9,8 +9,12 @@ import { useRouter } from 'expo-router';
 import ScoreRing from '@/components/ScoreRing';
 import StatusBadge from '@/components/StatusBadge';
 import DemoBanner from '@/components/DemoBanner';
+import HealthBanner from '@/components/HealthBanner';
+import { analyseProductHealth } from '@/services/healthAnalysis';
 import { useScan } from '@/stores/ScanContext';
+import { useHealth } from '@/stores/HealthContext';
 import { colors } from '@/components/ui/theme';
+import type { NutrientFact } from '@/types/product';
 
 const CONFIDENCE_LABELS = {
   high: { label: 'HIGH CONFIDENCE', color: colors.brandGreenDark, bg: colors.brandGreenSoft },
@@ -21,6 +25,7 @@ const CONFIDENCE_LABELS = {
 export default function ImpactScreen() {
   const router = useRouter();
   const { currentProduct } = useScan();
+  const { preferences } = useHealth();
   const auditButtonScale = useSharedValue(1);
   const auditButtonStyle = useAnimatedStyle(() => ({ transform: [{ scale: auditButtonScale.value }] }));
 
@@ -38,8 +43,21 @@ export default function ImpactScreen() {
   }
 
   const product = currentProduct;
+  const healthAnalysis = product.healthAnalysis
+    ?? analyseProductHealth(product as any, preferences);
   const scoreColor = product.score >= 70 ? colors.brandGreenDark : product.score >= 40 ? colors.accentOrange : '#DC2626';
   const confidence = CONFIDENCE_LABELS[product.confidence || 'estimated'];
+  const nutrientFacts = healthAnalysis.nutrientFacts ?? [];
+  const healthSummaryTitle = healthAnalysis.flaggedIngredients.length > 0
+    ? 'Not recommended for you'
+    : healthAnalysis.nutritionalWarning
+      ? 'Use caution'
+      : (healthAnalysis.matchedDiets && healthAnalysis.matchedDiets.length > 0)
+        ? 'Matches your preferences'
+        : 'No health flags detected';
+  const healthSummaryText = healthAnalysis.guidance
+    ?? 'Review the ingredient list and nutrition panel for confirmation.';
+  const formatNutrient = (fact: NutrientFact) => `${fact.amount} ${fact.unit}`;
 
   return (
     <View style={s.container}>
@@ -75,6 +93,7 @@ export default function ImpactScreen() {
               <Text style={s.methodologyText}>How is this scored?</Text>
             </Pressable>
           </Animated.View>
+          <HealthBanner health={healthAnalysis} />
         </View>
 
         {/* White content surface */}
@@ -114,6 +133,30 @@ export default function ImpactScreen() {
                 </View>
               </View>
             ))}
+          </Animated.View>
+
+          {/* Nutrient facts */}
+          <Animated.View entering={FadeInUp.delay(700).duration(400)} style={s.section}>
+            <Text style={s.sectionTitle}>NUTRIENT FACTS ANALYSIS</Text>
+            <View style={s.nutrientCard}>
+              {nutrientFacts.length === 0 ? (
+                <Text style={s.nutrientEmpty}>Nutrition data not available for this product.</Text>
+              ) : (
+                <View style={s.nutrientGrid}>
+                  {nutrientFacts.map((fact) => (
+                    <View key={fact.key} style={s.nutrientItem}>
+                      <Text style={s.nutrientLabel}>{fact.label}</Text>
+                      <Text style={s.nutrientValue}>{formatNutrient(fact)}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+              <Text style={s.nutrientFootnote}>Per 100g · Open Food Facts</Text>
+            </View>
+            <View style={s.nutrientSummary}>
+              <Text style={s.nutrientSummaryTitle}>{healthSummaryTitle}</Text>
+              <Text style={s.nutrientSummaryText}>{healthSummaryText}</Text>
+            </View>
           </Animated.View>
 
           {/* Audit CTA */}
@@ -189,6 +232,27 @@ const s = StyleSheet.create({
   dataSourceTag: { fontSize: 11, color: colors.stone, marginTop: 4, fontStyle: 'italic' },
   certBadge: { backgroundColor: colors.brandGreenSoft, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 9999 },
   certText: { fontSize: 11, fontWeight: '600', color: colors.brandGreenDark },
+  nutrientCard: {
+    backgroundColor: colors.canvas,
+    borderWidth: 1,
+    borderColor: colors.hairline,
+    borderRadius: 12,
+    padding: 14,
+  },
+  nutrientGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  nutrientItem: { width: '47%' },
+  nutrientLabel: { fontSize: 11, color: colors.steel, letterSpacing: 1 },
+  nutrientValue: { fontSize: 13, color: colors.ink, fontWeight: '600', marginTop: 4 },
+  nutrientFootnote: { fontSize: 11, color: colors.stone, marginTop: 10, fontStyle: 'italic' },
+  nutrientEmpty: { fontSize: 12, color: colors.steel },
+  nutrientSummary: {
+    marginTop: 12,
+    backgroundColor: colors.surfaceSoft,
+    borderRadius: 12,
+    padding: 12,
+  },
+  nutrientSummaryTitle: { fontSize: 12, color: colors.ink, fontWeight: '600' },
+  nutrientSummaryText: { fontSize: 12, color: colors.steel, marginTop: 6, lineHeight: 18 },
   auditButton: {
     borderWidth: 1, borderColor: colors.hairline, borderRadius: 12, padding: 16,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

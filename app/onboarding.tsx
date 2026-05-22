@@ -3,7 +3,7 @@
 
 import React, { useState } from 'react';
 import { View, Text, Pressable, Dimensions, StyleSheet } from 'react-native';
-import { Leaf, Camera, ShieldCheck, ArrowRight, ChevronRight } from 'lucide-react-native';
+import { Leaf, Camera, ShieldCheck, ArrowRight, ChevronRight, Heart } from 'lucide-react-native';
 import Animated, {
   FadeInRight, FadeOutLeft,
   useSharedValue, useAnimatedStyle, withSpring,
@@ -44,6 +44,13 @@ const SLIDES: OnboardingSlide[] = [
     subtitle: 'TRUST THE DATA',
     description: 'Our scoring algorithm is fully documented. Every score shows its confidence level and data sources so you can make informed decisions.',
   },
+  {
+    icon: Heart,
+    color: '#f43f5e',
+    title: 'Your Health,\nYour Rules',
+    subtitle: 'PERSONAL HEALTH',
+    description: "Tell us your dietary preferences and allergens once. We'll flag risky ingredients and highlight products that match your lifestyle — every scan, automatically.",
+  },
 ];
 
 export default function OnboardingScreen() {
@@ -60,7 +67,7 @@ export default function OnboardingScreen() {
       setCurrentSlide(currentSlide + 1);
     } else {
       await setHasSeenOnboarding(true);
-      router.replace('/(tabs)/scanner');
+      router.replace('/health-profile' as any);
     }
   };
 

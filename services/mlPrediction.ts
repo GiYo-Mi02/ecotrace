@@ -15,6 +15,8 @@ import { initModel, predict, getModelStatus, loadWeightsFromJSON } from './tenso
 import { encodeFromOFFProduct, encodeLocalProduct, NUM_FEATURES } from './featureEncoder';
 import { fetchProductByBarcode, calculateDataQuality } from './openFoodFacts';
 import { mapOFFToProductScan } from './scoring';
+import { analyseProductHealth } from './healthAnalysis';
+import { loadUserPreferences } from './storage';
 import type { OFFRawProduct, LocalProduct } from './featureEncoder';
 import type { FetchSource } from './openFoodFacts';
 import type { ProductScan } from '@/types/product';
@@ -323,12 +325,15 @@ export async function predictFromBarcode(barcode: string): Promise<BarcodePredic
     manufacturing_places: offProduct.manufacturing_places,
     ecoscore_score: offProduct.ecoscore_score ?? undefined,
     ecoscore_grade: offProduct.ecoscore_grade,
-    nutrient_levels_tags: [],
-    ingredients_analysis_tags: [],
+    nutrient_levels_tags: offProduct.nutrient_levels_tags,
+    ingredients_analysis_tags: offProduct.ingredients_analysis_tags,
   });
 
   // Step 3: Build ProductScan using scoring.ts (5-factor scoring for UI)
   const productScan = mapOFFToProductScan(offProduct, barcode);
+
+  const prefs = await loadUserPreferences();
+  productScan.healthAnalysis = analyseProductHealth(offProduct, prefs);
 
   // Step 4: Enhance ProductScan with ML prediction data
   // Use the ML score if no verified ecoscore exists
